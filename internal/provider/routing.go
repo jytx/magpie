@@ -105,6 +105,18 @@ func SetSink(id string, sink bool) error {
 	return Save(*p)
 }
 
+// SetUseFirst puts a provider's keys or accounts ahead of the other
+// providers' where Smart weighs them together, or back in Smart's own
+// order (Provider.UseFirst).
+func SetUseFirst(id string, on bool) error {
+	p, err := Find(id)
+	if err != nil {
+		return err
+	}
+	p.UseFirst = on
+	return Save(*p)
+}
+
 // SetCapStop has a subscription answer 429 while every account is held at
 // its usage cap, rather than go on to its fallbacks (Provider.CapStop), or
 // go on to them again.
@@ -616,6 +628,13 @@ func (a Allowance) Pooled(model string, share float64, now time.Time) bool {
 		}
 		pooled = pooled || scoped
 		whole = whole || !scoped
+	}
+	if !pooled && !whole {
+		// no window counts model, as Antigravity's Gemini models that
+		// fetchAvailableModels gives no quota (#3737): when every window
+		// the account has is some models' only, nothing is known to be
+		// the whole account's, and the refusal is the model's
+		return len(a) > 0 && !slices.ContainsFunc(a, func(l Limit) bool { return l.Model == "" && l.matches == nil })
 	}
 	return full || pooled && !whole
 }

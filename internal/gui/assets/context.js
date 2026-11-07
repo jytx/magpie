@@ -1275,7 +1275,7 @@
     // few: put in by tune, too few calls to advise on; kept for Undo (linkaww)
     const r = a.compact || a.ttl || { current: a.setting.value, best: a.setting.value, cost: 0, low: 0 };
     const ttl = a.knob != "compact";
-    const show = (v) => ttl ? ttlName(v) : fmtK(+v);
+    const show = (v) => ttl ? (v ? ttlName(v) : t("Default")) : fmtK(+v);
     const cur = ttl ? r.current : r.current, best = r.best;
     const same = String(cur) === String(best);
     const saves = r.cost > 0 ? (r.cost - r.low) / r.cost : 0;
@@ -1308,12 +1308,7 @@
       ? chart(a.compact.curve || [], r.current, r.best, show, timed)
       : chart([{ value: "5m", cost: r.short }, { value: "1h", cost: r.hour }], r.current, r.best, show);
     if (c) row.append(c);
-    // the leanest band: the windows within 3% of the cheapest on the curve,
-    // the share tune counts as costing the same. Timed, the advice keeps a
-    // window that waits no longer than now, so a window the reader picked
-    // past the band (yapechan on Discord: a larger one) comes back as the
-    // advice and isn't the leanest; it says so, names the band, and offers
-    // the band's largest window, the one of them that compacts least
+    // the leanest band: within 3% of the cheapest (yapechan on Discord)
     const curve = (a.compact && a.compact.curve) || [];
     const fewest = curve.length ? Math.min(...curve.map((p) => p.cost)) : 0;
     const band = curve.filter((p) => p.cost <= fewest * 1.03);
@@ -1360,6 +1355,7 @@
       : el("span", "ctx-chip info", "");
     verdict.append(el("i"), lean ? t("Not the leanest: {range} spends the fewest tokens", { range: bandName })
       : applied ? t("In use") : same ? t("Already the leanest for how you work") : t("{pct} fewer tokens · {tokens} over the range", { pct: pct(saves), tokens: fmtK(Math.round(r.cost - r.low)) }));
+    verdict.hidden = !!a.few && !applied;
     foot.append(verdict, el("span", "grow"));
     const note = el("div", "ctx-tune-src");
     title.after(note);
@@ -1390,28 +1386,20 @@
       undo.onclick = () => send("undo");
       foot.append(undo);
     }
-    if (!same && !applied && !held) {
-      const go = el("button", "text primary", t("Use {value}", { value: show(best) }));
+    const use = (v, tt) => {
+      const go = el("button", "text primary", t("Use {value}", { value: show(v) }));
       go.type = "button";
       go.disabled = tuneBusy === key;
-      if (set.value && !set.ours) go.dataset.tt = t("Replaces your {value}; Undo puts it back", { value: show(set.value) });
-      go.onclick = () => send("apply", best);
+      if (tt) go.dataset.tt = tt;
+      go.onclick = () => send("apply", v);
       foot.append(go);
-    }
-    if (lean && !held) {
-      const go = el("button", "text primary", t("Use {value}", { value: show(lean.value) }));
-      go.type = "button";
-      go.disabled = tuneBusy === key;
-      go.dataset.tt = set.value && !set.ours
-        ? t("Replaces your {value}; Undo puts it back", { value: show(set.value) })
-        : t("Fewer tokens, but more compactions to wait on");
-      go.onclick = () => send("apply", lean.value);
-      foot.append(go);
-    }
-    // a window of the reader's own (#1860), from the same replay: each
-    // value's tokens against the setting now, which the reader picks away
-    // from (hayden4608 on Discord: against the leanest, every line read as
-    // more), and compactions, both estimates
+    };
+    const yours = set.value && !set.ours && t("Replaces your {value}; Undo puts it back", { value: show(set.value) });
+    if (!same && !applied && !held) use(best, yours);
+    // an hour no Undo puts back, too few calls to weigh (linkaww)
+    if (a.few && ttl && cur === "1h" && !held && !set.ours) use("5m", yours);
+    if (lean && !held) use(lean.value, yours || t("Fewer tokens, but more compactions to wait on"));
+    // a window of the reader's own (#1860), against the setting now (hayden4608)
     const pts = (a.compact && a.compact.curve) || [];
     if (pts.length > 1 && !held) {
       const other = el("button", "text ctx-tune-pick", t("Other window…"));
@@ -1502,6 +1490,10 @@
     pane.append(grid);
   }
 
+  // what this page can draw: another version's reply can hold other rows
+  // (Linka on Discord: a page from before few rows threw on one, "r.cost")
+  const obj = (r) => !!r && typeof r == "object", objs = (l) => Array.isArray(l) ? l.filter(obj) : [];
+
   async function loadTune(force) {
     const read = ++tuneRead, days = ctxDays;
     if (tuneData && tuneData.days !== +days) tuneData = null;
@@ -1509,7 +1501,7 @@
     if (read !== tuneRead) return;
     const json = JSON.stringify(data);
     if (!force && tuneData && json === tuneJSON) return;
-    tuneData = { days: +data.days || +days, agents: (data.agents || []).map((a) => ({ ...a, advice: a.advice || [] })) }, tuneJSON = json;
+    tuneData = { days: +data.days || +days, agents: objs(data?.agents).map((a) => ({ ...a, advice: objs(a.advice).filter((r) => obj(r.compact) || obj(r.ttl) || r.few).map((r) => ({ ...r, setting: obj(r.setting) ? r.setting : {} })) })) }, tuneJSON = json;
     renderContext();
   }
 
