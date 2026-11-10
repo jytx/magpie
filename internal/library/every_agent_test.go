@@ -46,6 +46,8 @@ var noLibrary = map[string]string{
 	"aionui":            "not looked at (#5897)",
 	"cherrystudio":      "not looked at (#5897)",
 	"lody":              "not looked at (#5897)",
+	"miniq":             "not looked at (#5897)",
+	"paimon":            "not looked at (#5897)",
 }
 
 func TestEveryAgentInLibrary(t *testing.T) {
