@@ -32,7 +32,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -40,6 +39,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/edit"
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/steady"
 )
@@ -88,7 +88,7 @@ func coldAfter(p provider.Provider) time.Duration {
 	if p.Account != nil && p.Account.Agent == "codex" {
 		return chatGPTCold
 	}
-	if p.Host() == deepseekHost {
+	if p.VendorHost() == deepseekHost {
 		return deepseekCold
 	}
 	return cacheCold
@@ -462,6 +462,7 @@ func strictKeep(scope, mode string, in http.Header, body []byte, cs []candidate,
 		}
 		w := pl.left[i]
 		w.Unlisted, w.Capped, w.CapBack = false, 0, nil
+		w.CapAmount, w.CapCount, w.CapUnit = 0, 0, ""
 		pl.left = slices.Delete(slices.Clone(pl.left), i, i+1)
 		back, order = append(back, c), append(order, w)
 	}
@@ -1152,7 +1153,7 @@ func unanswered(key string, c candidate) {
 // blob", which names no item and says nothing of encrypted content,
 // where the #3392 shaping (xaiBody's) never runs because the relay's
 // host isn't api.x.ai.
-var foreignReasoning = regexp.MustCompile(`(?i)invalid_encrypted_content|invalid[ _]encrypted[ _](summary|content)|encrypted[ _]content.{0,80}could not be (verified|decrypted)|could not (decrypt|verify).{0,40}encrypted[ _]content|could not (decode|decrypt).{0,20}compaction[ _]blob`)
+var foreignReasoning = lazyre.New(`(?i)invalid_encrypted_content|invalid[ _]encrypted[ _](summary|content)|encrypted[ _]content.{0,80}could not be (verified|decrypted)|could not (decrypt|verify).{0,40}encrypted[ _]content|could not (decode|decrypt).{0,20}compaction[ _]blob`)
 
 // refusedSeals remembers, per conversation and the key or account that
 // refused it, what another one sealed: its reasoning, and the sealed copy

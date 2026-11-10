@@ -48,6 +48,8 @@ var Vars = []string{
 	// Raft (slock), whose agents keep their Pi sessions in its folder
 	"SLOCK_HOME",
 	"PRIME_AGENT_CODING_AGENT_DIR",
+	// mu's agent folder (agentDirFor in kyrn/bin/mu.mjs), KYRN_ its old name
+	"MU_AGENT_DIR", "KYRN_AGENT_DIR", "MU_CODING_AGENT_DIR", "KYRN_CODING_AGENT_DIR",
 	// StepCode: config root resolution and folder overrides
 	"STEP_CODING_AGENT_DIR", "STEPCODE_CONFIG_DIR",
 	// MothX's config folder ($MOTHX_DIR/settings.json)
@@ -84,7 +86,7 @@ var Vars = []string{
 	// named profile's folder (~/.openclaw-<profile>) and its own ~
 	"OPENCLAW_CONFIG_PATH", "OPENCLAW_STATE_DIR", "OPENCLAW_PROFILE", "OPENCLAW_HOME",
 	// MiMo Code, MiniMax Code, OpenHanako, Hermes, dsh, WorkBuddy, CodeBuddy Code
-	"MIMOCODE_HOME", "MINIMAX_DATA_DIR", "HANA_HOME", "HERMES_HOME", "DSH_HOME",
+	"MIMOCODE_HOME", "MINIMAX_DATA_DIR", "MAVIS_DATA_DIR", "HANA_HOME", "HERMES_HOME", "DSH_HOME",
 	"WORKBUDDY_CONFIG_DIR", "CODEBUDDY_CONFIG_DIR",
 	// DS Bot's data folder, and its Electron userData holding locations.json
 	"DS_BOT_HOME", "DS_BOT_SHELL_DATA",

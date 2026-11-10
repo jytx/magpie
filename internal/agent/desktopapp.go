@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/appdir"
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/proc"
 )
 
@@ -96,6 +96,16 @@ var desktopApps = map[string]desktopApp{
 	// electron-builder registers it under, the UUID v5 of the appId in its
 	// namespace, as dsh's above is of com.deepseek.dsh. Linux's deb links
 	// /usr/bin/penguin, so Bin finds it there.
+	// mu's desktop app (desktop/packages/desktop/electron-builder.yml,
+	// qybaihe/mu b71cd18: appId io.github.qybaihe.mu, productName and
+	// executable mu) carries mu-agent itself (resources/harness) and runs
+	// it on the CLI's agent folder (MU_AGENT_DIR, kyrn/naming.ts), so it
+	// needs no CLI. Windows' assisted NSIS installer and its guid as
+	// penguin's below; Linux's deb puts it in /opt/mu (v0.3.9's
+	// mu-0.3.9-linux-amd64.deb), whose /usr/bin/mu link is no mu-agent
+	// (notMuAgent).
+	"mu": {id: "io.github.qybaihe.mu", names: []string{"mu.app"}, win: filepath.Join("mu", "mu.exe"), guid: "8be59721-9051-5f2b-8372-96932fdbf5da",
+		onLinux: &linuxApp{dirs: []string{"/opt/mu"}, exe: "mu", name: "mu", scheme: "mu"}},
 	"penguin": {id: "com.prismshadow.penguinharness", names: []string{"PenguinHarness.app"}, win: filepath.Join("PenguinHarness", "PenguinHarness.exe"), guid: "8bb9acb7-2bdc-596b-9669-7b014ab1c47f"},
 	// The CodeBuddy IDE (Tencent's VS Code fork, 4.12.2: CodeBuddy.app,
 	// com.tencent.codebuddy, from codebuddy.ai; CodeBuddy CN.app,
@@ -226,8 +236,8 @@ func registeredExeDir(v string) string {
 }
 
 var (
-	plistIDRe      = regexp.MustCompile(`<key>CFBundleIdentifier</key>\s*<string>([^<]+)</string>`)
-	plistVersionRe = regexp.MustCompile(`<key>CFBundleShortVersionString</key>\s*<string>([^<]+)</string>`)
+	plistIDRe      = lazyre.New(`<key>CFBundleIdentifier</key>\s*<string>([^<]+)</string>`)
+	plistVersionRe = lazyre.New(`<key>CFBundleShortVersionString</key>\s*<string>([^<]+)</string>`)
 )
 
 // macBundle reports whether app's bundle is in one of appFolders, under one
@@ -256,11 +266,10 @@ type plistInfo struct {
 // to tell two writes apart is read again (racyDir).
 func bundleInfo(bundle string) (plistInfo, bool) {
 	p := filepath.Join(bundle, "Contents", "Info.plist")
-	st, err := os.Stat(p)
-	if err != nil {
+	mod, size, ok := statStamp(p)
+	if !ok {
 		return plistInfo{}, false
 	}
-	mod, size := st.ModTime(), st.Size()
 	plists.Lock()
 	k, ok := plists.m[p]
 	plists.Unlock()
@@ -341,11 +350,10 @@ func inAppFolders(dirs []string, names ...string) []string {
 // it. A time too recent to tell two changes apart is not trusted, as git
 // treats a racily clean index.
 func folderSubs(dir string) []string {
-	st, err := os.Stat(dir)
-	if err != nil {
+	mod, _, ok := statStamp(dir)
+	if !ok {
 		return nil
 	}
-	mod := st.ModTime()
 	appSubs.Lock()
 	k, ok := appSubs.m[dir]
 	appSubs.Unlock()
@@ -425,7 +433,9 @@ func spotlightBundles(id string) []string {
 	out, err := proc.CommandContext(ctx, "mdfind", "kMDItemCFBundleIdentifier == '"+id+"'").Output()
 	if err == nil {
 		for _, p := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			if p = strings.TrimSpace(p); p != "" {
+			// an app dragged to the Trash, as a Mac app is uninstalled,
+			// is still in Spotlight: it isn't installed
+			if p = strings.TrimSpace(p); p != "" && !inTrash(p) {
 				paths = append(paths, p)
 			}
 		}
@@ -435,6 +445,12 @@ func spotlightBundles(id string) []string {
 	}
 	spotlight.m[id] = spotlightAnswer{paths: paths, at: time.Now()}
 	return paths
+}
+
+// inTrash reports whether p is in a Mac's Trash: the user's ~/.Trash, or
+// a volume's .Trashes.
+func inTrash(p string) bool {
+	return strings.Contains(p, "/.Trash/") || strings.Contains(p, "/.Trashes/")
 }
 
 // AppVersion is the version of the agent's desktop app installed here, ""
@@ -493,7 +509,7 @@ func (app desktopApp) linuxDir() string {
 	return dir
 }
 
-var linuxPackageVersionRe = regexp.MustCompile(`"version"\s*:\s*"([^"]+)"`)
+var linuxPackageVersionRe = lazyre.New(`"version"\s*:\s*"([^"]+)"`)
 
 // linuxVersion is the version of the app's Linux package, from its
 // resources/linux-package-metadata.json ({"codexAppBrand":"chatgpt",

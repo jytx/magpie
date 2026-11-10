@@ -23,7 +23,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -42,6 +41,7 @@ import (
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/ghtoken"
 	"github.com/yetone/magpie/internal/lastgood"
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/library"
 	"github.com/yetone/magpie/internal/mcpauth"
 	"github.com/yetone/magpie/internal/middleware"
@@ -232,6 +232,9 @@ type agentJSON struct {
 	// what it read before magpie's last change, for the row's Restart
 	// (agent.AppBehind)
 	AppRestart *agent.AppRun `json:"appRestart,omitempty"`
+	// Isolated: Claude Desktop's Claude Magpie app (#5671), only where it
+	// can be (macOS): whether it is on, and the app
+	Isolated *agent.DesktopIsolated `json:"isolated,omitempty"`
 	// Joined: connected with its own models still in its list (Codex
 	// signed in with ChatGPT, agent.Agent.Join)
 	Joined bool `json:"joined,omitempty"`
@@ -415,6 +418,12 @@ type settingsJSON struct {
 	AllowIPsEnv     string   `json:"allowIPsEnv,omitempty"`
 	AllowIPsFromEnv []string `json:"allowIPsFromEnv,omitempty"`
 	OnNetwork       bool     `json:"onNetwork,omitempty"`
+	// the client certificates issued and still good (mtls.go), while
+	// other computers can reach magpie or mTLS is on; MTLSSaved: the
+	// folder the one just issued was saved to
+	MTLSCerts []mtlsCert `json:"mtlsCerts,omitempty"`
+	MTLSErr   string     `json:"mtlsError,omitempty"`
+	MTLSSaved string     `json:"mtlsSaved,omitempty"`
 	// Dir is the data folder beside a portable magpie (#508)
 	Portable bool `json:"portable,omitempty"`
 	// Log is the log the desktop app writes (applog), as shown; "" for a
@@ -472,6 +481,11 @@ type settingsJSON struct {
 	// (RedactRouteTo): those whose every route is set to go unmasked
 	// (gateway.MaskRoute)
 	MaskRouteModels []modelRef `json:"maskRouteModels"`
+	// the providers the user set to Send requests unmasked
+	// (provider.SkipsRedaction), listed in Settings › Privacy, each a way
+	// to its editor, so the switch is found from where masking is
+	// (CrazyMouse_TT on X)
+	UnmaskedProviders []modelRef `json:"unmaskedProviders"`
 	// what each of the disabled models (#1867) turns off now, by pattern
 	DisabledHits map[string][]string `json:"disabledHits,omitempty"`
 	// the model magpie's generate_image tool draws with when ImageGen
@@ -535,6 +549,11 @@ type settingsJSON struct {
 	// where other containers on this host reach the gateway while magpie
 	// runs in one (gateway.ContainerHostURL)
 	LANContainerHost string `json:"lanContainerHost,omitempty"`
+	// a LazyCat app's domain, which only devices with LazyCat's client
+	// reach (gateway.LazyCatURL), and whether the box's LAN addresses are
+	// listed too: when not, the page says how the port gets there
+	LANLazyCat    string `json:"lanLazyCat,omitempty"`
+	LANLazyCatBox bool   `json:"lanLazyCatBox,omitempty"`
 	// those of LANURLs at an internet address, which anyone online can
 	// reach, not only this network
 	LANPublic []string `json:"lanPublic,omitempty"`
@@ -802,6 +821,9 @@ func settingsState() settingsJSON {
 	if list, env := gateway.AllowIPs(); env {
 		s.AllowIPsEnv, s.AllowIPsFromEnv = os.Getenv(gateway.AllowIPsEnv), list
 	}
+	if s.LAN || s.OnNetwork || s.MTLS {
+		s.MTLSCerts, s.MTLSErr = mtlsCerts()
+	}
 	if s.LAN || gateway.OnNetwork() {
 		s.PublicURL = gateway.PublicURL()
 		s.PublicKind = gateway.URLKind(s.PublicURL)
@@ -843,6 +865,7 @@ func settingsState() settingsJSON {
 	if s.LAN {
 		s.LANURLs, s.LANContainer = gateway.LANURLs(), gateway.ContainerAddrs()
 		s.LANContainerHost = gateway.ContainerHostURL()
+		s.LANLazyCat, s.LANLazyCatBox = gateway.LazyCatURL(), gateway.LazyCatBox()
 		s.LANPublic = gateway.PublicURLs(s.LANURLs)
 	}
 	s.CodexWarmed, s.ClaudeWarmed = latest(provider.CodexWarmed()), latest(provider.ClaudeWarmed())
@@ -876,6 +899,12 @@ func settingsState() settingsJSON {
 	s.TitleModels, s.MaskRouteModels = []modelRef{}, []modelRef{}
 	// only a provider set to go unmasked can take one (most have none)
 	unmaskedAny := slices.ContainsFunc(provider.All(), provider.Provider.SkipsRedaction)
+	s.UnmaskedProviders = []modelRef{}
+	for _, p := range provider.All() {
+		if p.SkipsRedaction() {
+			s.UnmaskedProviders = append(s.UnmaskedProviders, modelRef{ID: p.ID, Name: p.Name, Provider: p.ID, PName: p.Name, Icon: p.Icon})
+		}
+	}
 	for _, pat := range s.DisabledModels {
 		if s.DisabledHits == nil {
 			s.DisabledHits = map[string][]string{}
@@ -977,7 +1006,14 @@ var onDock func(settings.Settings)
 var assetTypes = map[string]string{".svg": "image/svg+xml", ".png": "image/png", ".css": "text/css; charset=utf-8",
 	".js": "text/javascript; charset=utf-8", ".html": "text/html; charset=utf-8"}
 
-func init() {
+// addAssetTypes is called by Handler, not init: the mime package reads
+// and parses the system's whole type table (/etc/apache2/mime.types,
+// ~18,000 allocations) the first time a type is added, and a launch that
+// serves no page (`magpie statusline` on every Claude Code message) never
+// needs it.
+var addAssetTypes = sync.OnceFunc(registerAssetTypes)
+
+func registerAssetTypes() {
 	for ext, t := range assetTypes {
 		mime.AddExtensionType(ext, t)
 	}
@@ -1034,7 +1070,7 @@ func revalidated(next http.Handler) http.Handler {
 
 // pageFile is a script or stylesheet of the page's own, named in it: one
 // of the page's, or of a built-in plugin's under plugins/<id>/.
-var pageFile = regexp.MustCompile(`(src|href)="([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.(?:js|css))"`)
+var pageFile = lazyre.New(`(src|href)="([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.(?:js|css))"`)
 
 // versionedPage is the page with each of its own scripts and stylesheets
 // named with its content's hash; one not among the page's files (boot.js,
@@ -1055,6 +1091,7 @@ func versionedPage(page []byte) []byte {
 // gw is the gateway this process serves, or nil when another magpie has it
 // (for now: see startBackend).
 func Handler(w Windows, gw *gateway.Server) http.Handler {
+	addAssetTypes()
 	if gw != nil {
 		served.Store(gw)
 	}
@@ -1127,6 +1164,9 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 				}
 				if u := gateway.ContainerHostURL(); u != "" {
 					side["containerHost"] = u
+				}
+				if u := gateway.LazyCatURL(); u != "" {
+					side["lazyCat"], side["lazyCatBox"] = u, gateway.LazyCatBox()
 				}
 				if u := gateway.PublicURL(); u != "" {
 					side["publicURL"] = u
@@ -1209,7 +1249,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	// so a config rewritten elsewhere shows without a reload
 	mux.HandleFunc("GET /api/drift", func(rw http.ResponseWriter, r *http.Request) {
 		out := map[string]*agent.Drift{}
-		for _, a := range agent.Detected() {
+		for _, a := range agent.DetectedIn(heldAgents()) {
 			if d := a.Drift(); d != nil {
 				out[a.ID] = d
 			}
@@ -1278,6 +1318,21 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	})
 	// quits the agent's desktop app and opens it again, so it reads what
 	// magpie wrote: the row's Restart, after the user said yes to it
+	// Claude Desktop's Claude Magpie app on or off (#5671): the app made or
+	// taken away, and a Desktop on magpie moved into its folder or back
+	mux.HandleFunc("POST /api/settings/desktop-isolated", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct{ On bool }
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		home, _ := os.UserHomeDir()
+		if _, err := agent.SetDesktopIsolated(home, in.On); err != nil {
+			fail(rw, err)
+			return
+		}
+		writeJSON(rw, state())
+	})
 	mux.HandleFunc("POST /api/agents/restart/{id}", func(rw http.ResponseWriter, r *http.Request) {
 		a, err := agent.Find(r.PathValue("id"))
 		if err != nil {
@@ -1449,6 +1504,8 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	sessionRoutes(mux, w)
 	sessionManageRoutes(mux, w)
 	backupRoutes(mux, w)
+	dataFolderRoutes(mux, w)
+	mtlsRoutes(mux, w)
 	uninstallRoutes(mux, w)
 	archiveRoutes(mux)
 	libraryRoutes(mux, w)
@@ -1945,6 +2002,20 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 			}
 		}
 		if err := provider.SetCodexAutoReview(v); err != nil {
+			fail(rw, err)
+			return
+		}
+		writeJSON(rw, settingsState())
+	})
+	// the service tier every request of Codex's goes at (JackyFill on X):
+	// "" as Codex asks it, "default" with none, "priority" or "ultrafast"
+	mux.HandleFunc("POST /api/settings/codex-service-tier", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct{ Tier string }
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		if err := provider.SetCodexServiceTier(in.Tier); err != nil {
 			fail(rw, err)
 			return
 		}
@@ -2850,7 +2921,7 @@ func held(h http.Handler) http.Handler {
 }
 
 func state() stateJSON {
-	s := stateJSON{Agents: []agentJSON{}, Profiles: []profileJSON{}, Catalog: catalog.Source(), Settings: settings.Load()}
+	s := stateJSON{Agents: []agentJSON{}, Profiles: []profileJSON{}, Catalog: catalog.Source(), Settings: settings.Shared()} // only encoded, never changed
 	// state() is asked for after nearly every click, so the rate — a
 	// network fetch once every TTL — is only worth its rare latency when
 	// cny is actually chosen; usd never looks at it
@@ -2868,10 +2939,11 @@ func state() stateJSON {
 			s.Served++
 		}
 	}
-	for _, a := range agent.Clients() {
+	all := heldAgents()
+	for _, a := range agent.ClientsIn(all) {
 		s.Clients = append(s.Clients, clientJSON{ID: a.ID, Name: a.Name, Icon: a.Icon})
 	}
-	detected := agent.Detected()
+	detected := agent.DetectedIn(all)
 	now := make(map[string]map[string]string, len(detected))
 	for _, a := range detected {
 		if a.Follow != nil {
@@ -2902,6 +2974,11 @@ func state() stateJSON {
 			aj.AppSnag = provider.CodexAppSnagged()
 		}
 		aj.AppRestart = a.AppBehind()
+		if a.ID == "claude-desktop" && a.WSL == "" {
+			if iso, ok := agent.DesktopIsolatedHere(); ok {
+				aj.Isolated = &iso
+			}
+		}
 		if a.Import != nil {
 			aj.Import = a.Import()
 			if a.Added != nil {
@@ -2928,7 +3005,7 @@ func state() stateJSON {
 	}
 	if ps, err := profile.Load(); err == nil {
 		for _, n := range profile.Names(ps) {
-			pj := profileJSON{Name: n, Summary: profile.Summary(ps[n]), Agents: profile.Details(ps[n]), InUse: profile.InUse(ps[n], detected, now)}
+			pj := profileJSON{Name: n, Summary: profile.Summary(ps[n]), Agents: profile.DetailsIn(ps[n], all), InUse: profile.InUse(ps[n], detected, now)}
 			if l := ps[n].Library; l != nil {
 				servers, skills := l.On()
 				pj.Library = &profileLibraryJSON{Servers: servers, Skills: skills, Instructions: l.GivesInstructions()}

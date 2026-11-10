@@ -37,13 +37,13 @@ var Keys = []string{
 	// usage and alerts
 	"currency", "chineseUnits", "usageAlert", "balanceAlert", "resetReminder", "turnDoneAlert", "maskAlert",
 	// network
-	"proxy",
+	"proxy", "pluginProxy",
 	// privacy
 	"redact", "redactPersonal", "redactKinds", "redactWords", "redactWordsAnyCase", "redactWordsWhole", "redactShape",
 	"noStats", "noUsageStats", "otel",
 	// warm-ups and check-ins
 	"codexWarmup", "claudeWarmup", "codexWarmAt", "claudeWarmAt", "codexWarmAts", "claudeWarmAts",
-	"workbuddyCheckin", "traeCheckin", "minimaxCheckin", "qoderCheckin",
+	"workbuddyCheckin", "traeCheckin", "minimaxCheckin", "qoderCheckin", "checkinAt",
 	// models: replies, vision, images, search
 	"replyModel", "noLoopGuard", "claudeLeanPrompt", "claudePrintMode", "refusalRetries", "retryAfterCap",
 	"vision", "visionEffort", "imageGen", "videoGen", "imageTimeout", "classifyTimeout",
@@ -286,11 +286,13 @@ func Merge(body []byte, cur settings.Settings, web bool) (settings.Settings, err
 	in.Port = cur.Port                                 // set on its own (port), which moves the gateway
 	in.CORSOrigins = cur.CORSOrigins                   // set on its own (cors)
 	in.AllowIPs = cur.AllowIPs                         // set on its own (allowips)
+	in.MTLS = cur.MTLS                                 // set on its own (mtls)
 	in.FetchPrivate = cur.FetchPrivate                 // in settings.json only
 	in.RouterNote = cur.RouterNote                     // set on its own (the Library's servers/hub-note)
 	in.RouterAllTools = cur.RouterAllTools             // set on its own (the Library's servers/hub-tools)
 	in.GitHubToken = cur.GitHubToken                   // set on its own (github-token), never sent to the page
 	in.ProxyCustom = cur.ProxyCustom                   // set by settings.Save from the proxy, never by the page
+	in.PluginProxyCustom = cur.PluginProxyCustom       // and plugin downloads' from theirs
 	in.RequestArchive = cur.RequestArchive             // the Gateway page's, set on its own
 	in.RequestArchiveMaxMB = cur.RequestArchiveMaxMB   // in settings.json only
 	in.ClaudeRunsMost = cur.ClaudeRunsMost             // magpie claude-code runs, or settings.json (#2956)
@@ -337,6 +339,8 @@ func Merge(body []byte, cur settings.Settings, web bool) (settings.Settings, err
 	in.CodexAsyncCompact, in.CodexAsyncCompactPercent = cur.CodexAsyncCompact, cur.CodexAsyncCompactPercent
 	// Claude Desktop's list, set in its row on the Agents page
 	in.DesktopLongest = cur.DesktopLongest
+	// and whether it runs in a folder of its own, set there too (#5671)
+	in.DesktopIsolated = cur.DesktopIsolated
 	// and the Get started card put away, from the card itself
 	in.GuideHidden = cur.GuideHidden
 
@@ -349,6 +353,9 @@ func Merge(body []byte, cur settings.Settings, web bool) (settings.Settings, err
 	// in their Agents rows
 	in.CodexSubagentModel = cur.CodexSubagentModel
 	in.DesktopSubagentModel = cur.DesktopSubagentModel
+	in.CodexServiceTier = cur.CodexServiceTier // codex-service-tier
+	// and the model DeepSeek Harness compacts on, set in its row
+	in.DshCompactModel = cur.DshCompactModel
 	// and the model for requests masking would change (redact-route)
 	in.RedactRouteTo = cur.RedactRouteTo
 	in.DesktopSubagentEffort = cur.DesktopSubagentEffort

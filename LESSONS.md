@@ -414,7 +414,13 @@ re-derives every place that discloses it.**
   placeholder's random suffix spelled it ({{HOSTNAME_mlopsiy3}}) on macOS
   CI. f0453192 strips placeholders before the check, in its sibling
   TestMask too.
-- Seen 1× (2026-10-10).
+- 11-10: TestSearchAPIFailureKeepsNoURL looked for its query's "4410"
+  in usage.jsonl by substring. A random port (127.0.0.1:44105, #5616)
+  and then a route_id (1794294410888, run 42771382484) held it, and
+  main went red. Gaoshou101's patch, posted on #5616 three days before,
+  made the query letters only (17b9b5b03). A word a test looks for
+  can't be spelled by a port, an id, a time or a hash.
+- Seen 2× (2026-10-10, 2026-11-10).
 
 **Playwright's WebKit is not WebKitGTK.** A GUI change with motion or a new
 browser API is tried in the real Linux app too.
@@ -617,7 +623,15 @@ before the merge, are in the code standards.)
   (#2710). 17557132c met the same budget without a raise.
 - A raise moves something out first, or follows a growth rate the owner
   set.
-- Seen 1× (2026-10-17).
+- 11-10: the cap held, so it was met another way. The budget counts
+  comments, and five features that reached it (ecc16fe97, b72256b59,
+  b3a57b3d8, d374168d0 and the check-in time) each went red on CI and
+  were brought back under by deleting comments that say why the code is
+  as it is: 12 lines in b596da773, 44 in 0eac4e6aa (11-09). Nothing moved
+  out to a plugin (#5918). A budget that counts comments makes them the
+  cheapest thing to cut. Measure what the budget is about, and run the
+  sub-second guard before pushing a change near it.
+- Seen 2× (2026-10-17, 2026-11-10).
 
 **A release published after a newer one takes Latest, and with it the
 update feed and the tap, unless the publish step checks.**

@@ -13,12 +13,12 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptrace"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tidwall/gjson"
 
@@ -27,6 +27,7 @@ import (
 	"github.com/yetone/magpie/internal/claudeseal"
 	"github.com/yetone/magpie/internal/codexcat"
 	"github.com/yetone/magpie/internal/codexsummary"
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/settings"
 	"github.com/yetone/magpie/internal/usage"
@@ -49,7 +50,7 @@ var codexAPIBase = "https://api.openai.com/v1"
 // only magpie reads back (codexsummary).
 const magpieCompaction = codexsummary.Mark
 
-var nativeSealedAgentPayload = regexp.MustCompile(`^gAAAAA[A-Za-z0-9_-]+={0,2}$`)
+var nativeSealedAgentPayload = lazyre.New(`^gAAAAA[A-Za-z0-9_-]+={0,2}$`)
 
 // codexCompactPrompt and codexSummaryPrefix are Codex's own (Apache-2.0,
 // openai/codex, prompts/templates/compact).
@@ -117,6 +118,8 @@ func (s *Server) codexBackend(w http.ResponseWriter, r *http.Request) {
 		// it, as handle's and gemini's do (Jason on Discord: a held Codex
 		// turn showed as no model, "magpie · 0 on")
 		noteAsked(r.Context(), model)
+		// the service tier set for Codex, in place of the one it asked
+		body = codexTiered(r, body, model)
 		// a turn of the conversation's own: the model its side calls may
 		// follow (codexFollowTo)
 		meta := requestSessionMetadata(r.Header, body)
@@ -976,7 +979,7 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 	usage.Saw(agentOf(r))
 	// Codex's own turns come here from the mux, not through serve: the
 	// row written below sums this call's tries in its own context (#4456)
-	r = r.WithContext(context.WithValue(r.Context(), upBytesKey{}, &upBytes{}))
+	r = r.WithContext(s.countBytes(r.Context()))
 	w0, body0 := w, body // as they came, for the fallbacks (codexFallBack)
 	// Claude's blocks magpie gave Codex (claudeseal) are Claude's alone:
 	// to OpenAI each item is its summary, as before magpie carried them
@@ -984,6 +987,16 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 	base := provider.CodexBase
 	if apiKey(r.Header) && rest != "/models" {
 		base = codexAPIBase
+	}
+	// the account ChatGPT limited till a time it named is not asked again
+	// before it: Codex's retries are answered here (codexHolds)
+	holdKey := ""
+	if r.Method == http.MethodPost && (rest == "/responses" || rest == "/responses/compact") {
+		holdKey = codexHoldKey(base, on)
+		if h, ok := codexHeld(holdKey, start); ok {
+			s.writeCodexHeld(w, r, h, base, on, modelOf(body), start)
+			return
+		}
 	}
 	var maskedHits maskHits
 	// the ChatGPT sign-in the user set to go unmasked, and its fallbacks
@@ -1407,6 +1420,9 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 		if (rest == "/responses" || rest == "/responses/compact") && res.StatusCode >= 400 {
 			msg, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 			res.Body = io.NopCloser(bytes.NewReader(msg))
+			// its credits and resets looked at above, a 429 that names
+			// when the account is back holds it till then (codexHolds)
+			noteCodexHold(holdKey, res.StatusCode, res.Header, msg)
 			if overload && codexBusy(res.StatusCode, msg) && s.codexFallsBack(modelOf(body), body) {
 				// still too busy once asked again: the fallbacks answer
 				said := provider.APIError(msg, res.Status)
@@ -1614,7 +1630,7 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 		RequestID: requestID(res.Header), ResponseID: uu.ResponseID, Endpoint: r.URL.Path}
 	failedWith(&rec, call.Status, call.Error, errType)
 	if up := upBytesOf(r.Context()); up != nil {
-		rec.UpBytes, rec.PlainBytes = up.wire, up.plain
+		rec.UpBytes, rec.PlainBytes, rec.Socket = up.wire, up.plain, up.socket
 		rec.DownBytes = up.downOf()
 	}
 	appendUsage(r, rec)
@@ -1780,7 +1796,7 @@ func codexRelayedAccount(base string, h http.Header, on *provider.Provider) (pro
 // found"), which a relay in front of one answers in words of its own
 // ("Referenced reasoning item 'rs_…' was not found or has expired",
 // #3062).
-var unreadableItem = regexp.MustCompile(`(?i)(?:encrypted content for item|item with id|referenced reasoning item) '?([A-Za-z]+_[A-Za-z0-9_-]+)'?`)
+var unreadableItem = lazyre.New(`(?i)(?:encrypted content for item|item with id|referenced reasoning item) '?([A-Za-z]+_[A-Za-z0-9_-]+)'?`)
 
 // withoutUnreadable is body without what OpenAI's refusal msg says it
 // can't read: the item it names, what another account sealed
@@ -2851,7 +2867,7 @@ func reasoningTextRefused(model string) string { return "reasoning text\x00" + m
 // long. Expected an array with maximum length 0, but got an array with
 // length 1 instead." (the ChatGPT backend's; a relay's may word the rest
 // otherwise, #1411)
-var reasoningContentRefusal = regexp.MustCompile(`input\[(\d+)\]\.content'?:? array too long`)
+var reasoningContentRefusal = lazyre.New(`input\[(\d+)\]\.content'?:? array too long`)
 
 // refusesReasoningText is a 400 refusing the reasoning text in a Responses
 // request: the item the refusal names is reasoning with text in it.
@@ -2922,7 +2938,7 @@ func citationOffsetRefused(model string) string { return "citation offsets\x00" 
 // it passes it on: "Invalid response.create payload: Missing required
 // parameter: 'input[221].content[0].annotations[0].start_index'."
 // (#4921)
-var citationOffsetRefusal = regexp.MustCompile(`input\[\d+\]\.content\[\d+\]\.annotations\[\d+\]\.(?:start|end)_index`)
+var citationOffsetRefusal = lazyre.New(`input\[\d+\]\.content\[\d+\]\.annotations\[\d+\]\.(?:start|end)_index`)
 
 // refusesCitationOffsets is a 400 refusing a Responses request over a
 // citation that lacks the offsets OpenAI's schema wants.
@@ -3099,7 +3115,24 @@ func callItemIDs(body []byte) []byte {
 // "Invalid 'input[1].id': 'rs_6aca2fc7533c979d5f0e4f7a:rs_01a125caa544754e9a3c70080100b009'.
 // Expected an ID that contains letters, numbers, underscores, or dashes,
 // but this value contained additional characters."
-var itemIDRefusal = regexp.MustCompile(`(?s)Invalid 'input\[\d+\]\.id'.{0,1000}?Expected an ID that contains letters, numbers, underscores, or dashes`)
+// It is the tail within 1000 characters of the head: the regexp
+// .{0,1000}? it was unrolled to 88kB of program, held from start to exit.
+func itemIDRefusal(b []byte) bool {
+	const tail = "Expected an ID that contains letters, numbers, underscores, or dashes"
+	for _, at := range itemIDRefusalHead.FindAllIndex(b, -1) {
+		rest, end := b[at[1]:], 0
+		for n := 0; n < 1000 && end < len(rest); n++ {
+			_, w := utf8.DecodeRune(rest[end:])
+			end += w
+		}
+		if bytes.Contains(rest[:min(len(rest), end+len(tail))], []byte(tail)) {
+			return true
+		}
+	}
+	return false
+}
+
+var itemIDRefusalHead = lazyre.New(`Invalid 'input\[\d+\]\.id'`)
 
 // itemIDsRefused is how unfit remembers a provider turning away, for
 // model, an input item id with another character in it (plainItemIDs).
@@ -3110,7 +3143,7 @@ func itemIDsRefused(model string) string { return "item ids\x00" + model }
 // Azure OpenAI's, the ChatGPT backend behind a Codex sign-in, and Copilot's
 // /responses in front of them.
 func validatesItemIDs(p provider.Provider) bool {
-	return strings.HasSuffix(p.Host(), "openai.com") || p.IsAzure() ||
+	return strings.HasSuffix(p.VendorHost(), "openai.com") || p.IsAzure() ||
 		p.Account != nil && (p.Account.Agent == "codex" || p.Account.Agent == "copilot")
 }
 
@@ -3266,7 +3299,7 @@ func plainItemIDs(body []byte) []byte {
 }
 
 // longCallID finds a call_id longer than the ChatGPT backend takes.
-var longCallID = regexp.MustCompile(`"call_id"\s*:\s*"[^"]{65,}"`)
+var longCallID = lazyre.New(`"call_id"\s*:\s*"[^"]{65,}"`)
 
 // boundCallIDs is a Responses request with every call_id longer than 64
 // characters as provider.BoundCallID has it, the rest of the request byte
@@ -3352,7 +3385,7 @@ var keepsSeal = map[string]bool{`"reasoning"`: true, `"compaction"`: true, `"com
 // ChatGPT backend get it as it came; so does anything else, byte for byte,
 // when none of them is in it.
 func forVendor(p provider.Provider, body []byte, compaction bool) []byte {
-	if p.Account != nil && p.Account.Agent == "codex" || strings.HasSuffix(p.Host(), "openai.com") {
+	if p.Account != nil && p.Account.Agent == "codex" || strings.HasSuffix(p.VendorHost(), "openai.com") {
 		return body
 	}
 	if compaction {
@@ -3450,7 +3483,7 @@ func forVendor(p provider.Provider, body []byte, compaction bool) []byte {
 // to read in it.
 func keepsAccessPrograms(p provider.Provider, in http.Header) bool {
 	return p.Account != nil && p.Account.Agent == "codex" ||
-		strings.HasSuffix(p.Host(), "openai.com") ||
+		strings.HasSuffix(p.VendorHost(), "openai.com") ||
 		p.IsRemoteMagpie() ||
 		p.CodexAsSent && p.Account == nil && fromCodex(in)
 }
@@ -3864,7 +3897,7 @@ func upstreamFailed(rec *recorder) bool {
 		upstreamFailedWords.Match(rec.body.Bytes())
 }
 
-var upstreamFailedWords = regexp.MustCompile(`(?i)upstream request failed`)
+var upstreamFailedWords = lazyre.New(`(?i)upstream request failed`)
 
 // summaryTooLarge is a summary request refused for its size: past the
 // vendor's byte cap (413; DeepSeek's "Failed to buffer the request body:
@@ -3910,7 +3943,7 @@ func inputKindRefused(rec *recorder, err error) bool {
 	return inputKindWords.Match(rec.body.Bytes())
 }
 
-var inputKindWords = regexp.MustCompile(`(?i)unsupported_input_item|unknown item type`)
+var inputKindWords = lazyre.New(`(?i)unsupported_input_item|unknown item type`)
 
 // compactFailure names who answered a summary request with a failure — the
 // provider, the model and the provider's base URL — and what it said.

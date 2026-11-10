@@ -12,8 +12,8 @@ import (
 // leaving the row connected on the model it went back to (#835, OpenHanako's
 // own deepseek/deepseek-v4-pro).
 func TestOwnProviderNamedAsMagpies(t *testing.T) {
-	ids := []string{"agy", "opencode", "openchamber", "mimocode", "deveco", "pi", "aside", "omo", "prime-agent", "goose", "zed", "vscode",
-		"crush", "dsh", "ds-bot", "commandcode", "fx", "omp", "hermes", "morph", "kimi", "empryo", "minimax-code", "droid",
+	ids := []string{"agy", "opencode", "openchamber", "mimocode", "deveco", "pi", "aside", "omo", "prime-agent", "mu", "goose", "zed", "vscode",
+		"crush", "dsh", "ds-bot", "commandcode", "fx", "omp", "hermes", "morph", "kimi", "empryo", "nanobot", "minimax-code", "droid",
 		"qoder", "qoder-cn", "grok", "atomcode", "cline", "snow", "qwenpaw"}
 	for _, id := range ids {
 		t.Run(id, func(t *testing.T) {
