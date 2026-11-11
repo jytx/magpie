@@ -496,7 +496,7 @@ function renderAgents() {
     const row = el("div", "row agent");
     row.dataset.id = a.id;
     row.title = a.path;
-    row.oncontextmenu = (ev) => { ev.preventDefault(); openAgentMenu(row.querySelector(".ag-handle"), a, inFold); };
+    row.oncontextmenu = (ev) => { ev.preventDefault(); openAgentMenu(row.querySelector(".ag-handle"), a, inFold, { x: ev.clientX, y: ev.clientY }); };
     const who = el("div", "who");
     who.append(el("div", "name", a.name));
     // the model picker takes the wide column, everything else the narrow one,
@@ -3796,7 +3796,7 @@ function closeAgentMenu() {
   removeEventListener("resize", closeAgentMenu);
   agentMenu = null;
 }
-function openAgentMenu(anchor, a, inFold) {
+function openAgentMenu(anchor, a, inFold, at) {
   if (!anchor) return;
   const again = agentMenu?.anchor === anchor;
   closeAgentMenu();
@@ -3826,11 +3826,11 @@ function openAgentMenu(anchor, a, inFold) {
         { name: "Hide", icon: EYE_OFF, sep: true, run: () => setAgentHidden(a, true) },
         ...magpie.actions?.("agent", { agent: { id: a.id, name: a.name } }) || [],
       ];
-  openRowMenu(anchor, acts);
+  openRowMenu(anchor, acts, at);
 }
 // openRowMenu: a small menu of acts under anchor, the one an agent row's
 // right-click opens, and a model chip's
-function openRowMenu(anchor, acts) {
+function openRowMenu(anchor, acts, at) {
   const box = el("div", "pop row-menu");
   box.setAttribute("role", "menu");
   const items = [];
@@ -3854,7 +3854,7 @@ function openRowMenu(anchor, acts) {
     if (!o.off) items.push(b);
   }
   document.body.append(box);
-  placeMenu(box, anchor, "left", -4);
+  placeMenu(box, anchor, "left", -4, at);
   anchor.classList.add("open");
   const outside = (e) => { if (!box.contains(e.target) && !anchor.contains(e.target)) closeAgentMenu(); };
   // a long menu scrolls inside itself; only a scroll outside it closes it
@@ -6149,7 +6149,7 @@ function renderProviders(quiet) {
     // (#499): its logo is the handle, as an agent row's is
     row.append(p.off ? icon(p.icon || "generic") : providerHandle(p, row), who, uses, key, providerSwitch(p), chev);
     // right-click: Move to Top, Move Up, Move Down, Move to Bottom (#1614)
-    if (!p.off) row.oncontextmenu = (ev) => { ev.preventDefault(); openProviderMenu(row.querySelector(".pv-handle"), p); };
+    if (!p.off) row.oncontextmenu = (ev) => { ev.preventDefault(); openProviderMenu(row.querySelector(".pv-handle"), p, { x: ev.clientX, y: ev.clientY }); };
     row.onclick = async () => {
       if (providerDirty() && !(await confirmDiscard())) return;
       // a list drawn before the fresh one is in (#1519) leaves out what the
@@ -6220,7 +6220,7 @@ function stepProvider(id, by, keyboard) {
 }
 
 // openProviderMenu: a row's right-click (#1614), Use first, Never a fallback
-function openProviderMenu(anchor, p) {
+function openProviderMenu(anchor, p, at) {
   if (!anchor) return;
   const again = agentMenu?.anchor === anchor;
   closeAgentMenu();
@@ -6236,7 +6236,7 @@ function openProviderMenu(anchor, p) {
     { name: "Use first", icon: p.useFirst ? CHECK : "", sep: !0, run: () => accountAction("provider/usefirst", { id: p.id, useFirst: !p.useFirst }, t(p.useFirst ? "{name} takes its turn with the others" : "{name} is used first", { name: p.name })) },
     { name: "Never a fallback", icon: p.noStandIn ? CHECK : "", run: () => accountAction("provider/standin", { id: p.id, noStandIn: !p.noStandIn }, t(p.noStandIn ? "{name} can be a fallback again" : "{name} is never a fallback for another model", { name: p.name })) },
     ...magpie.actions?.("provider", { provider: { id: p.id, name: p.name } }) || [],
-  ]);
+  ], at);
 }
 
 // Providers' search (#1614): the rows saying every word, on and off, by their
@@ -11353,7 +11353,7 @@ function renderModels(p) {
         const k = kindNow(id);
         acts.push({ name: k ? t("Makes: {kind}…", { kind: t(KIND_NAMES[k]) }) : t("Makes: Auto…"), icon: "M2.5 4h11v8h-11zM6.5 6.25v3.5L9.5 8z", tip: t("Say this model makes images or videos, when the provider's model list doesn't"), run: () => pickKind(c, id) });
       }
-      openRowMenu(c, acts);
+      openRowMenu(c, acts, { x: e.clientX, y: e.clientY });
     };
     // the API it is asked on, when one is picked (or staged)
     const now = apis.length && (!decidesModel(p, id) || apiNow(id) === "decide") ? apiNow(id) : "";
@@ -15247,8 +15247,9 @@ function scrollCloses(box, e) {
 // in turn, menu kept open; live: choose after each tick).
 // placeMenu puts an app menu under its anchor, or over it, or where there
 // is more room, scrolling inside itself (#1437)
-function placeMenu(box, anchor, align = "left", dx = 0) {
-  const r = anchor.getBoundingClientRect(), h = box.offsetHeight, pad = 8, top = popTop(pad);
+function placeMenu(box, anchor, align = "left", dx = 0, at) {
+  // at: a right-click's pointer, the menu opens there (mmmg_btc on X)
+  const r = at ? { left: at.x, right: at.x, top: at.y, bottom: at.y - 3 } : anchor.getBoundingClientRect(), h = box.offsetHeight, pad = 8, top = popTop(pad);
   let y = r.bottom + 5;
   const below = innerHeight - pad - y, above = r.top - 5 - top;
   if (h > below && above >= h) { y = r.top - 5 - h; box.classList.add("up"); }
@@ -20077,6 +20078,7 @@ function renderSettings() {
   renderGitHubToken(s);
   renderImages(s, keep);
   renderSearch(s, keep);
+  window.pipeCheckFill ? pipeCheckFill() : import("./pipecheck.js").then(() => pipeCheckFill(), () => {});
   renderReplies(s, keep);
   renderDisabledModels(s);
   renderRedact(s, keep);
@@ -20286,12 +20288,13 @@ async function renderSync(v) {
   };
   const btn = (label, fn, cls = "text") => { const b = el("button", cls, label); b.onclick = fn; return b; };
   const toggle = (id) => () => { syncOpen = syncOpen === id ? "" : id; renderSync(); };
-  const parts = (ps) => ps.map((p) => t({ providers: "providers", settings: "settings", profiles: "profiles", agents: "agents' models", library: "library", usage: "usage", signins: "sign-ins" }[p])).join(t(", "));
+  const parts = (ps) => ps.map((p) => t({ providers: "providers", settings: "settings", profiles: "profiles", agents: "agents' models", library: "library", memory: "memory", usage: "usage", signins: "sign-ins" }[p])).join(t(", "));
 
   // off: what it would keep the same, from the view's toggles (none: all on)
   const goes = ["settings", "profiles"];
   if (v.agents !== false) goes.push("agents");
   if (v.library !== false) goes.push("library");
+  if (v.memory !== false) goes.push("memory");
   if (v.usage) goes.push("usage");
   if (v.signIns) goes.push("signins");
   let line = t("Keeps {parts} the same on every computer", {

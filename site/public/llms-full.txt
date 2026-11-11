@@ -1573,7 +1573,7 @@ DashScope turns away a thinking Qwen model asked for one whole reply (`enable_th
 
 No. Neither Token Plan has an API for its credits; the plan’s subscription page in Alibaba’s console shows them. magpie’s Usage tab still counts the tokens each agent spent.
 
-Every agent: [Models in Claude Code](https://usemagpie.ai/docs/claude-code-models), [Models in Codex](https://usemagpie.ai/docs/codex-models), [Models in Gemini CLI](https://usemagpie.ai/docs/gemini-cli-models), [Models in OpenCode](https://usemagpie.ai/docs/opencode-models). Ask on [Discord](https://discord.gg/vGSnD3ZKQF) if you get stuck.
+Every agent: [Models in Claude Code](https://usemagpie.ai/docs/claude-code-models), [Models in Codex](https://usemagpie.ai/docs/codex-models), [Models in Gemini CLI](https://usemagpie.ai/docs/gemini-cli-models), [Models in OpenCode](https://usemagpie.ai/docs/opencode-models), [Qwen Code on any model](https://usemagpie.ai/docs/qwen-code). Ask on [Discord](https://discord.gg/vGSnD3ZKQF) if you get stuck.
 
 ---
 
@@ -1946,7 +1946,7 @@ magpie lists what Copilot’s `/models` gives the account: chat models only, wit
 
 **By provider:** [DeepSeek](https://usemagpie.ai/docs/deepseek) · [Kimi and Kimi Code](https://usemagpie.ai/docs/kimi) · [GLM Coding Plan](https://usemagpie.ai/docs/glm) · [Qwen](https://usemagpie.ai/docs/qwen) · [MiniMax](https://usemagpie.ai/docs/minimax) · [Anthropic](https://usemagpie.ai/docs/anthropic) · [OpenAI](https://usemagpie.ai/docs/openai) · [Gemini](https://usemagpie.ai/docs/gemini) · [Grok](https://usemagpie.ai/docs/grok) · [Mistral](https://usemagpie.ai/docs/mistral) · [OpenRouter](https://usemagpie.ai/docs/openrouter) · [Ollama](https://usemagpie.ai/docs/ollama)
 
-Every agent: [Models in Claude Code](https://usemagpie.ai/docs/claude-code-models), [Models in Codex](https://usemagpie.ai/docs/codex-models), [Models in Gemini CLI](https://usemagpie.ai/docs/gemini-cli-models), [Models in OpenCode](https://usemagpie.ai/docs/opencode-models). Ask on [Discord](https://discord.gg/vGSnD3ZKQF) if you get stuck.
+Every agent: [Models in Claude Code](https://usemagpie.ai/docs/claude-code-models), [Models in Codex](https://usemagpie.ai/docs/codex-models), [Models in Gemini CLI](https://usemagpie.ai/docs/gemini-cli-models), [Models in OpenCode](https://usemagpie.ai/docs/opencode-models), [Copilot CLI on any model](https://usemagpie.ai/docs/copilot-cli). Ask on [Discord](https://discord.gg/vGSnD3ZKQF) if you get stuck.
 
 ---
 
@@ -3723,7 +3723,120 @@ No. Raycast watches providers.yaml and picks up magpie’s entry when it changes
 
 Yes. Every model is listed with tools on, and the gateway carries tool calls to each model’s provider.
 
-More agents on the same models: [Models in OpenCode](https://usemagpie.ai/docs/opencode-models), [Models in Claude Code](https://usemagpie.ai/docs/claude-code-models) and [Crush on any model](https://usemagpie.ai/docs/crush). Something fails? See [Fixing common errors](https://usemagpie.ai/docs/troubleshooting), or ask on [Discord](https://discord.gg/vGSnD3ZKQF).
+More agents on the same models: [Models in OpenCode](https://usemagpie.ai/docs/opencode-models), [Models in Claude Code](https://usemagpie.ai/docs/claude-code-models), [Crush on any model](https://usemagpie.ai/docs/crush) and [Copilot CLI on any model](https://usemagpie.ai/docs/copilot-cli). Something fails? See [Fixing common errors](https://usemagpie.ai/docs/troubleshooting), or ask on [Discord](https://discord.gg/vGSnD3ZKQF).
+
+---
+
+Source: https://usemagpie.ai/docs/copilot-cli
+
+# Copilot CLI on any model
+
+GitHub Copilot CLI can run on model providers of your own (bring your own key), which needs no GitHub sign-in. magpie adds itself to Copilot CLI as one, so `copilot` can run on any model you have in magpie: DeepSeek, Kimi, GLM, Qwen, an OpenAI key, or a ChatGPT subscription, with no key pasted into Copilot.
+
+Copilot CLI keeps its folder in `~/.copilot` (or `$COPILOT_HOME`). Its own providers are in `providers.json` there (or `$COPILOT_PROVIDERS_CONFIG`). magpie adds a provider named `magpie` to that file, OpenAI-compatible, with the gateway’s address and a key of Copilot’s own, and adds magpie’s models beside it, each with its name, context window and output limit. Then it sets `model` in `settings.json` to `magpie/<model>`. The gateway translates each request for the model’s provider, tool calls and reasoning included.
+
+## Connect Copilot CLI
+
+1. **Add providers in magpie.** In the Providers tab, add an API key or sign in to a subscription.
+2. **Pick a model on Copilot CLI’s row.** In the Agents tab, choose a model under magpie.
+3. **Start copilot.** It runs on that model. Copilot’s own `/model` lists magpie’s models too.
+
+```
+magpie copilot deepseek/deepseek-v4-pro    # settings.json: magpie/deepseek/deepseek-v4-pro
+magpie copilot                             # what Copilot CLI runs on now
+```
+
+The row also lists Copilot’s own models and `auto`, Copilot’s own choice, for when you want GitHub’s models back.
+
+## Effort
+
+The row sets `effortLevel`, which Copilot saves beside the model: the model’s own levels, or low, medium, high and xhigh when Copilot’s list doesn’t name them. Copilot clears it when its own `/model` changes the model.
+
+```
+magpie copilot effort high
+magpie copilot effort default
+```
+
+## Your providers.json
+
+magpie owns only the provider named magpie and the models that name it. Your other providers, their models and any other key in the file stay where they are, and so does a key you add to magpie’s provider yourself. A providers.json that isn’t valid JSON is left alone, never written over. When magpie’s models change, magpie brings its entries up to date, and writes the file only when they would change.
+
+## Switch back
+
+Pick one of Copilot’s own models on the row, or run `magpie copilot default`. That removes `model` from settings.json and takes magpie’s provider and models out of providers.json, leaving the rest.
+
+## FAQ
+
+### Do I need a GitHub Copilot subscription?
+
+No. Copilot CLI’s own providers need no GitHub sign-in, so magpie’s models work without a Copilot plan.
+
+### Can Copilot CLI use my ChatGPT subscription?
+
+Yes. Sign in to ChatGPT in magpie and pick a GPT model under magpie on Copilot CLI’s row. Copilot sends its requests to magpie, which uses the subscription.
+
+### Why does settings.json say magpie/deepseek/…?
+
+Copilot names a model of one of its providers as provider/model, and magpie’s provider is called magpie. On the command line you can leave the magpie/ out.
+
+### Can I keep my own BYOK providers?
+
+Yes. magpie only touches its own provider and models in providers.json; yours stay as they are.
+
+More agents on the same models: [Models in OpenCode](https://usemagpie.ai/docs/opencode-models), [Models in Claude Code](https://usemagpie.ai/docs/claude-code-models), [Raycast on any model](https://usemagpie.ai/docs/raycast) and [Qwen Code on any model](https://usemagpie.ai/docs/qwen-code). Something fails? See [Fixing common errors](https://usemagpie.ai/docs/troubleshooting), or ask on [Discord](https://discord.gg/vGSnD3ZKQF).
+
+---
+
+Source: https://usemagpie.ai/docs/qwen-code
+
+# Qwen Code on any model
+
+Qwen Code, the `qwen` coding agent from the Qwen team, takes models of your own in its settings. magpie adds its models there, so qwen can run on any model you have in magpie, not only Qwen: DeepSeek, Kimi, GLM, an OpenAI or Anthropic key, or a ChatGPT or Copilot subscription, with no key pasted into qwen.
+
+Qwen Code keeps its settings in `~/.qwen/settings.json` (under `$QWEN_HOME` if set). magpie appends one entry per model to `modelProviders.openai` there, each with the gateway’s address, the model’s id, its name as qwen’s `/model` shows it, and its context window. Then it points `model` at your pick. The gateway translates each request for the model’s provider, tool calls and reasoning included. A Qwen Code in WSL is set up the same way.
+
+## Connect Qwen Code
+
+1. **Add providers in magpie.** In the Providers tab, add an API key or sign in to a subscription.
+2. **Pick a model on Qwen Code’s row.** In the Agents tab, choose a model under magpie.
+3. **Start a new qwen session.** Qwen Code reads a session’s model when it starts, so start a new session, or pick the model again with `/model`, where magpie’s models are listed too.
+
+```
+magpie qwen deepseek/deepseek-v4-pro    # Qwen Code on DeepSeek
+magpie qwen                             # what Qwen Code runs on now
+```
+
+## The key and /auth
+
+Every magpie entry takes its key from `MAGPIE_QWEN_API_KEY`, which magpie sets in the settings’ `env` object. The name is Qwen Code’s own, so a variable you exported in your shell or in `~/.qwen/.env` is unlikely to shadow it. magpie also sets `security.auth.selectedType` to `openai`, so qwen starts without asking `/auth`.
+
+## Your own models
+
+Your own `modelProviders` entries stay as they were, in front of magpie’s, so their ids don’t move, and they are listed on Qwen Code’s row beside magpie’s. When you pick a model of magpie’s, the model and auth type you had, with their address, are kept aside to be put back.
+
+## Switch back
+
+Pick one of your own models on the row, take the row off magpie, or run `magpie qwen default`. magpie puts back the model and auth type you had before, and removes its entries and its key once no model of magpie’s is in use.
+
+## FAQ
+
+### Can Qwen Code run on models other than Qwen?
+
+Yes. Any model you have in magpie is in qwen’s list: DeepSeek, Kimi, GLM, GPT, Claude and more.
+
+### Can Qwen Code use my ChatGPT subscription?
+
+Yes. Sign in to ChatGPT in magpie and pick a GPT model under magpie on Qwen Code’s row. qwen sends its requests to magpie, which uses the subscription.
+
+### Why doesn’t a running session change model?
+
+Qwen Code reads a session’s model when the session starts. Start a new one, or pick the model with /model.
+
+### Does it work with Qwen Code in WSL?
+
+Yes. magpie sets up a Qwen Code in a WSL distro too.
+
+More agents on the same models: [Models in OpenCode](https://usemagpie.ai/docs/opencode-models), [Models in Claude Code](https://usemagpie.ai/docs/claude-code-models) and [Copilot CLI on any model](https://usemagpie.ai/docs/copilot-cli). Something fails? See [Fixing common errors](https://usemagpie.ai/docs/troubleshooting), or ask on [Discord](https://discord.gg/vGSnD3ZKQF).
 
 ---
 

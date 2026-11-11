@@ -231,6 +231,7 @@ var cliForRoute = map[string]string{
 	"POST /api/settings/agent-compact":     "magpie model compact",
 	"POST /api/settings/agent-suffix":      "magpie model suffix",
 	"POST /api/settings/context-cap":       "magpie model context-cap",
+	"POST /api/settings/context-cap-mode":  "magpie model context-cap",
 	"POST /api/update/install":             "magpie update",
 	"GET /api/model-price":                 "magpie model price",
 	"POST /api/model-price":                "magpie model price",
@@ -265,6 +266,7 @@ var notYet = map[string]string{
 	"POST /api/gateway/held/reveal":              W,  // api.go
 	"POST /api/profile/{action}":                 A,  // api.go
 	"POST /api/proxy/check":                      S2, // api.go
+	"POST /api/pipelines/check":                  S2, // pipecheck.go: Settings › Models' Quick check, one real call a pipeline
 	"POST /api/proxies/save":                     S2, // proxies.go: Settings › Network's saved proxies
 	"POST /api/proxies/delete":                   S2, // proxies.go
 	"POST /api/proxies/test":                     S2, // proxies.go
@@ -409,6 +411,9 @@ var notYet = map[string]string{
 	"POST /api/memory/distill":                   L,  // memory_distill.go
 	"POST /api/memory/distill/run":               L,  // memory_distill.go
 	"POST /api/memory/distill/stop":              L,  // memory_distill.go
+	"POST /api/memory/promote":                   L,  // memory.go
+	"POST /api/memory/skill":                     L,  // memory.go
+	"POST /api/memory/decline":                   L,  // memory.go
 	"POST /api/memory/dream":                     L,  // memory_distill.go
 	"POST /api/memory/dream/run":                 L,  // memory_distill.go
 	"POST /api/memory/dream/undo":                L,  // memory_distill.go

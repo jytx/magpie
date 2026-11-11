@@ -1901,6 +1901,20 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		}
 		writeJSON(rw, settingsState())
 	})
+	// whether that longest context also holds a window the user set
+	// (settings.ContextCapAll)
+	mux.HandleFunc("POST /api/settings/context-cap-mode", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct{ All bool }
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		if err := provider.SetContextCapAll(in.All); err != nil {
+			fail(rw, err)
+			return
+		}
+		writeJSON(rw, settingsState())
+	})
 	// an agent's own Long conversations (settings.AgentCompacts): Own
 	// false follows the one for every agent again
 	mux.HandleFunc("POST /api/settings/agent-compact", func(rw http.ResponseWriter, r *http.Request) {
@@ -2040,6 +2054,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	// from through the proxy in force, and without it
 	mux.HandleFunc("POST /api/proxy/check", handleProxyCheck)
 	proxyRoutes(mux)
+	mux.HandleFunc("POST /api/pipelines/check", handlePipelineCheck)
 	mux.HandleFunc("POST /api/settings/codex-titles", func(rw http.ResponseWriter, r *http.Request) {
 		var in struct{ Model string }
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {

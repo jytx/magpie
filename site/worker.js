@@ -86,6 +86,7 @@ export default {
       url.hostname = url.hostname.slice(4);
       return Response.redirect(url.toString(), 301);
     }
+    if (url.pathname === "/api/plugins/tagged") return taggedPlugins(ctx);
     if (url.pathname.startsWith("/api/plugins/")) {
       const got = await pluginStats(req, env, ctx);
       if (got) return got;
@@ -1163,4 +1164,33 @@ function json(v, status = 200, headers = {}) {
     status,
     headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", ...headers },
   });
+}
+
+// taggedPlugins is the Plugins page's Discover list, built every half hour
+// by the plugins repo's `tagged` workflow onto its dist branch, passed on
+// for the desktops that can't reach GitHub (River_WLan on X). The edge
+// keeps it ten minutes, and the last whole copy stands in for a failed ask.
+const TAGGED = [
+  "https://raw.githubusercontent.com/magpie-community/plugins/dist/tagged.json",
+  "https://cdn.jsdelivr.net/gh/magpie-community/plugins@dist/tagged.json",
+];
+export async function taggedPlugins(ctx) {
+  const hit = await cached("tagged");
+  if (hit && Array.isArray(hit.plugins)) return json(hit, 200, { "Cache-Control": "public, max-age=600" });
+  for (const u of TAGGED) {
+    try {
+      const res = await fetch(u, { headers: UA });
+      if (!res.ok) continue;
+      const got = await res.json();
+      if (got.version !== 1 || !Array.isArray(got.plugins) || !got.plugins.length) continue;
+      remember(ctx, "tagged", got, 600);
+      remember(ctx, "tagged-good", got, KEEP);
+      return json(got, 200, { "Cache-Control": "public, max-age=600" });
+    } catch (e) {
+      console.log("tagged", u, e);
+    }
+  }
+  const good = await cached("tagged-good");
+  if (good && Array.isArray(good.plugins)) return json(good, 200, { "Cache-Control": "public, max-age=60" });
+  return json({ error: "no list yet" }, 503, NO_STORE);
 }

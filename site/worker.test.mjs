@@ -907,3 +907,32 @@ test("r2: the five-minute cron copies the newest release's files from github.com
     store.clear();
   }
 });
+
+test("plugins/tagged: the dist branch's list passed on, jsDelivr and the last copy when it fails", async () => {
+  const was = globalThis.fetch;
+  const list = { version: 1, plugins: [{ repo: "a/b", spec: "github:a/b", stars: 3 }] };
+  let rawDown = false, cdnDown = false;
+  globalThis.fetch = async (u) => {
+    u = String(u);
+    if (u.startsWith("https://raw.githubusercontent.com/magpie-community/plugins/dist/")) return rawDown ? new Response("x", { status: 503 }) : Response.json(list);
+    if (u.startsWith("https://cdn.jsdelivr.net/gh/magpie-community/plugins@dist/")) return cdnDown ? new Response("x", { status: 503 }) : Response.json(list);
+    throw new Error("a test reached " + u);
+  };
+  try {
+    store.delete("https://usemagpie.ai/__v2/tagged");
+    const ask = () => worker.fetch(new Request("https://usemagpie.ai/api/plugins/tagged"), {}, ctx);
+    let res = await ask();
+    assert.equal(res.status, 200);
+    assert.deepEqual((await res.json()).plugins, list.plugins);
+    store.delete("https://usemagpie.ai/__v2/tagged");
+    rawDown = true;
+    assert.equal((await (await ask()).json()).plugins[0].repo, "a/b", "jsDelivr stands in");
+    store.delete("https://usemagpie.ai/__v2/tagged");
+    cdnDown = true;
+    assert.equal((await (await ask()).json()).plugins[0].repo, "a/b", "the last whole copy stands in");
+    store.delete("https://usemagpie.ai/__v2/tagged-good");
+    assert.equal((await ask()).status, 503);
+  } finally {
+    globalThis.fetch = was;
+  }
+});
