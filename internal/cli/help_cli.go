@@ -47,6 +47,9 @@ func helpFor(args []string) string {
 		}
 		return groupUsage
 	case "library", "lib":
+		if len(args) > 1 && (args[1] == "project" || args[1] == "projects") {
+			return "  " + libraryProjectUsage
+		}
 		return "  " + libraryUsage
 	case "plugin", "plugins":
 		return pluginUsage
@@ -54,8 +57,12 @@ func helpFor(args []string) string {
 		return quotaUsage
 	case "statusline":
 		return statuslineUsage
+	case "status":
+		return statusUsage
 	case "mtls":
 		return mtlsUsage
+	case "https":
+		return httpsUsage
 	case "heap":
 		return heapUsage
 	case "cpu":

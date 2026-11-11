@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -78,11 +79,15 @@ type updater struct {
 	// waitMost first (gaveUp). onWait tells the tray what it waits on.
 	waiting  bool
 	waitFrom time.Time
-	waitGen  int
-	gaveUp   bool
-	whenIdle func() bool
-	onWait   func()
-	loops    sync.WaitGroup // the waits going on
+	// drainMost, with a wait `magpie update` armed: past it the restart
+	// goes ahead whatever is in flight (restartDrain); 0 waits as long as
+	// waitMost
+	drainMost time.Duration
+	waitGen   int
+	gaveUp    bool
+	whenIdle  func() bool
+	onWait    func()
+	loops     sync.WaitGroup // the waits going on
 	// With Settings' AutoRestart, the clock has autoRestart run (the app's
 	// or magpie web's restart) once a downloaded update is ready and the
 	// gateway idle (#2096); autoSkip is the version whose wait the user
@@ -147,6 +152,9 @@ type updateJSON struct {
 	// (handover.go): Busy is then the Claude subscription's turns alone,
 	// every other request finishing as the new version takes the next
 	Handover bool `json:"handover,omitempty"`
+	// Using, a restart by itself waits for the user to stop using a
+	// window (inUseAt)
+	Using bool `json:"using,omitempty"`
 }
 
 var updates = &updater{}
@@ -161,7 +169,8 @@ func updateDue(s settings.Settings, last, now time.Time) bool {
 
 func (u *updater) start() {
 	u.place(runtime.GOOS, update.GUI)
-	gateway.SetRestarter(u.restartBeside)               // magpie update in a terminal
+	gateway.SetRestarter(u.restartBesideAsked) // magpie update in a terminal
+	gateway.SetForceRestarter(u.restartBesideNow)
 	gateway.SetUpdater(u.updateAsked)                   // a magpie using this one updated
 	go provider.KeepRemotesUpdated(backendCtx, Version) // and this one's remotes
 	go u.followReplaced(backendCtx)                     // the app's or magpie web's update (visamzh on X)
@@ -683,6 +692,7 @@ func (u *updater) jsonIn(lang string) updateJSON {
 	}
 	if j.State == "ready" || u.waiting {
 		j.Waiting, j.GaveUp = u.waiting, u.gaveUp && !u.waiting
+		j.Using = u.waiting && !u.waitAsked && inUseAt(time.Now())
 		j.Handover = handover
 		if busy.Any() {
 			j.Busy = &busy
@@ -725,6 +735,16 @@ func (u *updater) relang(version, lang string) {
 }
 
 func updateRoutes(mux *http.ServeMux, w Windows) {
+	// a page's word of the user's input, which a restart by itself waits
+	// for to end (inUseAt); open: a dialog is open
+	mux.HandleFunc("POST /api/update/using", func(rw http.ResponseWriter, r *http.Request) {
+		var b struct {
+			Open bool `json:"open"`
+		}
+		json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&b)
+		noteUse(b.Open, time.Now())
+		rw.WriteHeader(http.StatusNoContent)
+	})
 	mux.HandleFunc("GET /api/update", func(rw http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("fresh") == "1" { // the Version row
 			updates.refreshLatest(settings.Load())

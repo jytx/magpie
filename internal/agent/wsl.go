@@ -226,6 +226,10 @@ type distro struct {
 	// Versions is what the CLIs of wslKinds that ask (version) said their
 	// versions are at the last probe, by the kind's id
 	Versions map[string]string `json:"versions,omitempty"`
+	// Paths is where the probe found each command in the distro, by name
+	// ("opencode": /home/me/.opencode/bin/opencode); a distro probed
+	// before this has none until it is probed again
+	Paths map[string]string `json:"paths,omitempty"`
 	// OmpProfiles are the named omp profiles the probe found under
 	// ~/.omp/profiles there: each is an agent of its own (omp#<name>).
 	// Kept so a stopped distro lists them without being started.
@@ -1192,6 +1196,15 @@ func wslHomes() []sessions.WSLHome {
 	return out
 }
 
+// wslAnswered is whether wsl.exe answered the last list of distros, so an
+// empty wslHomes means no distro has an agent (sessions.WSLListed).
+func wslAnswered() bool {
+	wslDistros()
+	wsl.Lock()
+	defer wsl.Unlock()
+	return wsl.listed
+}
+
 // wslCopilotDir is the Copilot CLI's folder under a distro's $HOME: not an
 // agent magpie sets up, but a sign-in it uses (provider.CopilotWSLDirs),
 // so a distro that has only it is kept as one agents are found in (#723).
@@ -1859,6 +1872,12 @@ func parseProbe(name, out string) *distro {
 	for bin, path := range bins {
 		if !onWindowsDrive(path, win) {
 			d.Has["bin:"+bin] = true
+			if strings.HasPrefix(path, "/") {
+				if d.Paths == nil {
+					d.Paths = map[string]string{}
+				}
+				d.Paths[bin] = path
+			}
 		}
 	}
 	if d.Gateway == "" {

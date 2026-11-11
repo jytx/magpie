@@ -10,6 +10,7 @@ import (
 
 	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/budget"
+	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/library"
 	"github.com/yetone/magpie/internal/provider"
@@ -53,8 +54,9 @@ type keyMCPJSON struct {
 func withLimits(keys []access.Key) []keyRow {
 	now := time.Now()
 	out := make([]keyRow, 0, len(keys))
-	for _, k := range keys {
-		row := keyRow{Key: k, UsedAll: budget.All(k, now)}
+	all := budget.AllOf(keys, now)
+	for i, k := range keys {
+		row := keyRow{Key: k, UsedAll: all[i]}
 		if len(row.UsedAll) > 0 {
 			row.Used = &row.UsedAll[0]
 		}
@@ -132,6 +134,33 @@ func callerKeyRoutes(mux *http.ServeMux) {
 				}
 			}
 			out = slices.Insert(out, at, m)
+		}
+		// the image and video models, which Catalog leaves out as agents
+		// don't chat with them: /v1/images and /v1/videos hold a key to its
+		// models as chat does (keyHolds), so a key held to some models had
+		// no way to be let draw but All models (aipha2025 on X)
+		for _, p := range provider.All() {
+			if !p.On() {
+				continue
+			}
+			var media []catalog.Model
+			media = append(media, gateway.Drawers(p)...)
+			media = append(media, gateway.Videomakers(p)...)
+			for _, e := range media {
+				id := p.ID + "/" + e.ID
+				if slices.ContainsFunc(out, func(m keyModelJSON) bool { return strings.EqualFold(m.ID, id) }) {
+					continue
+				}
+				m := keyModelJSON{ID: id, Name: cmp.Or(e.Name, e.ID), Provider: p.ID, ProviderName: cmp.Or(p.Name, p.ID)}
+				at := len(out)
+				for i := len(out) - 1; i >= 0; i-- {
+					if out[i].Provider == m.Provider {
+						at = i + 1
+						break
+					}
+				}
+				out = slices.Insert(out, at, m)
+			}
 		}
 		for _, p := range provider.All() {
 			if !p.On() {

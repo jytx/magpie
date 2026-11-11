@@ -2432,12 +2432,16 @@ func codexMerged(own []any, cached bool) []any {
 	// the windows the user set on the codex provider, as /v1/models says
 	// them (#674); a cached entry, which keeps what magpie handed Codex
 	// last, takes the account's own list's back when none is set
-	window := provider.CodexNativeWindow(cached)
+	window, capAt := provider.CodexNativeWindow(cached), settings.Shared().ContextCap
 	for _, m := range own {
 		if o, ok := m.(map[string]any); ok {
 			slug, _ := o["slug"].(string)
 			if n, most, ok := window(slug); ok {
 				codexcat.Window(o, n, most)
+			} else {
+				// none the user set: the longest context for every model
+				// holds (settings.ContextCap)
+				codexcat.Cap(o, capAt)
 			}
 		}
 	}
@@ -2471,6 +2475,22 @@ func codexMerged(own []any, cached bool) []any {
 		for _, m := range own {
 			o, _ := m.(map[string]any)
 			if slug, _ := o["slug"].(string); off[slug] {
+				continue
+			}
+			kept = append(kept, m)
+		}
+		own = kept
+	}
+	// and all of them with Show Codex's own models off: the picker offers
+	// magpie's alone. The model Codex is set to and the ones magpie serves
+	// stay; a hidden job (codex-auto-review) stays as it does above
+	// (iiiiiimone on X: the switch left Codex's picker as it was)
+	if out := provider.CodexOwnLeftOut(codexModelNow()); out != nil {
+		kept := own[:0]
+		for _, m := range own {
+			o, _ := m.(map[string]any)
+			slug, _ := o["slug"].(string)
+			if v, _ := o["visibility"].(string); v != "hide" && slug != "" && out(slug) {
 				continue
 			}
 			kept = append(kept, m)
@@ -2553,6 +2573,17 @@ func modelsEtag(h http.Header) {
 // it (agent.CodexOwnOnly): it is then handed only its own models (#1385).
 // Set by main; nil, every Codex gets magpie's models too.
 var CodexOwnOnly func() bool
+
+// CodexModelNow is the model this machine's Codex is set to
+// (agent.CodexModelNow); nil, none.
+var CodexModelNow func() string
+
+func codexModelNow() string {
+	if CodexModelNow == nil {
+		return ""
+	}
+	return CodexModelNow()
+}
 
 func codexOwnOnly() bool { return CodexOwnOnly != nil && CodexOwnOnly() }
 

@@ -401,8 +401,10 @@ func entriesAt(ms []catalog.Model, after int, effort string) []any {
 			e.Tiers = namedTiers(own, m.Tiers)
 		}
 		// an OpenAI model: a ChatGPT account's (codex/), or a group one is
-		// in (Fast, see provider.codexListed)
-		if v1 && (strings.HasPrefix(m.ID, "codex/") || m.Fast) {
+		// in (Fast, see provider.codexListed), or one a provider that seals
+		// a V2 lead's subagent tasks serves (Seals: a relay of the ChatGPT
+		// backend)
+		if v1 && (strings.HasPrefix(m.ID, "codex/") || m.Fast || m.Seals) {
 			e.MultiAgent = "v1"
 		} else if m.AgentsV2 {
 			e.MultiAgent = "v2"
@@ -1163,7 +1165,7 @@ func listedEntry(m catalog.Model, priority int, work settings.Settings, autoRevi
 			e["input_modalities"] = slices.DeleteFunc(slices.Clone(in), func(x any) bool { return x == "image" })
 		}
 	}
-	if v1 && m.Fast {
+	if v1 && (m.Fast || m.Seals) {
 		Stamp(e)
 	} else if _, ok := e["multi_agent_version"]; !ok && m.AgentsV2 {
 		e["multi_agent_version"] = "v2"
@@ -1206,6 +1208,28 @@ func Window(e map[string]any, n, most int) {
 		e["max_context_window"] = n
 	} else if cur, ok := e["max_context_window"].(int); ok && cur < n {
 		e["max_context_window"] = n
+	}
+}
+
+// Cap holds one of Codex's own entries to a window of at most n tokens
+// (settings.ContextCap), where the user set none for it: its window, the
+// most it may be raised to and the threshold it compacts at come down to n
+// when they are above it, and nothing else changes.
+func Cap(e map[string]any, n int) {
+	if n <= 0 {
+		return
+	}
+	for _, k := range []string{"context_window", "max_context_window", "auto_compact_token_limit"} {
+		switch v := e[k].(type) {
+		case float64:
+			if int(v) > n {
+				e[k] = n
+			}
+		case int:
+			if v > n {
+				e[k] = n
+			}
+		}
 	}
 }
 
