@@ -14,6 +14,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/catalog"
@@ -62,6 +63,16 @@ func init() {
 	provider.CodexNoAccount = codexNoAccount
 	// and whether the takeover was turned off by the user rather than
 	// ended by the reset (Keep on ChatGPT, Always ChatGPT, a Disconnect)
+	// and when magpie's list is named for the Codex app after its
+	// app-servers started, which list Codex's models alone till then
+	provider.CodexAppDesk = func() time.Time {
+		home, _ := homes()
+		a := codex(home)
+		if a.DeskAt == nil {
+			return time.Time{}
+		}
+		return a.DeskAt()
+	}
 	provider.CodexTakeoverOff = func() bool {
 		home, _ := homes()
 		a := codex(home)
@@ -102,7 +113,8 @@ func init() {
 // and the effort new sessions start at, which the app saves on each pick,
 // so a route that hashed it ended the app every few minutes
 // (indekkusu141209 on X, #4550). A new list is read at the app's next
-// launch, and the Agents row offers a Restart for it (StaleCopies).
+// launch, and the Agents row offers a Restart for it (StaleCopies). The
+// list named where none was is another matter (CodexAppDesk).
 func codexAppRoute() (route string, out, known bool) {
 	// asked every 3s for as long as magpie runs: the config looked at once
 	// for its keys, not once for each (#1665)
@@ -189,6 +201,13 @@ var others = []*Agent{
 	// ("pi-desktop/0.1.0"), it is told apart from Pi by that name, which
 	// Pi's "pi-" would take otherwise (#1966, dgmico)
 	{ID: "pi-desktop", Name: "PI-Desktop", Icon: "pi", UA: []string{"pi-desktop"}},
+	// FlowDown (wiki.qaq.flow) and Bob (com.hezongyidev.Bob) set no
+	// User-Agent of their own: FlowDown's sources have none, and Bob's
+	// requests go out through the system's networking, which names the
+	// app's executable first ("FlowDown/<build> CFNetwork/… Darwin/…").
+	// Icons are the apps' own App Store icons (#shannnnnks on X).
+	{ID: "flowdown", Name: "FlowDown", Icon: "flowdown-color", UA: []string{"flowdown"}},
+	{ID: "bob", Name: "Bob", Icon: "bob-color", UA: []string{"bob/"}},
 	// Kimi Code Desktop runs Kimi Code's engine on ~/.kimi-code, so it
 	// reaches magpie through Kimi Code's config, under a client name of
 	// its own ("kimi-code-desktop/…", jiabubu on Discord). Its icon is the
@@ -198,6 +217,10 @@ var others = []*Agent{
 	// Sessions lists those as Raft's (internal/sessions/raft.go), while
 	// their requests say "pi (…)" and are Pi's
 	{ID: "raft", Name: "Raft", Icon: "generic"},
+	// Magpie Memory reading conversations into memories: its requests are
+	// made as memdistill.Agent, by its token and never a User-Agent, and
+	// drawn with the brain the Library's Memory tab has (the owner, 11-12)
+	{ID: "memory", Name: "Memory", Icon: "memory"},
 }
 
 // Clients is everyone whose requests the gateway knows by name: every
@@ -211,7 +234,7 @@ func ClientsIn(all []*Agent) []*Agent {
 	var out []*Agent
 	for _, a := range all {
 		// a WSL agent's requests are its Windows twin's by their UA
-		if a.WSL == "" {
+		if a.WSL == "" && !a.Nested {
 			out = append(out, a)
 		}
 	}
@@ -325,6 +348,7 @@ func onMachineAll(home, cfg string) []*Agent {
 		qwenpaw(home),
 		openClaw(home),
 		jcode(home),
+		vibe(home),
 		miniMax(home),
 		droid(home),
 		cline(home),
@@ -1532,7 +1556,20 @@ func piLikeKeyed(at place, id, name, dir string, key func() string) *Agent {
 	if id == "pi" {
 		extension = func() error { return piExtensionSynced(dir, modelsPath, at.v1(), key()) }
 	}
+	// the pi-magpie extension serves provider "magpie" live, so Pi's
+	// models.json block is not written and magpie's own stale one goes
+	// (pimagpie.go)
+	viaExt := func() bool { return id == "pi" && piMagpieInstalled(path) }
 	writeMagpie := func() error {
+		if viaExt() {
+			if err := dropPiBlock(modelsPath, func() string {
+				return wiringOff(name, modelsPath, func(k string) (string, bool) { return edit.GetJSON(modelsPath, "providers."+magpieID+"."+k) },
+					"baseUrl", at.v1(), "apiKey", key())
+			}); err != nil {
+				return err
+			}
+			return extension()
+		}
 		if err := edit.SetJSON(modelsPath, edit.KV{Path: "providers." + magpieID, Value: block()}); err != nil {
 			return err
 		}
@@ -1555,12 +1592,19 @@ func piLikeKeyed(at place, id, name, dir string, key func() string) *Agent {
 			if p, _ := get("defaultProvider"); p != magpieID {
 				return ""
 			}
+			if viaExt() {
+				return ""
+			}
 			return wiringOff(name, modelsPath, func(k string) (string, bool) { return edit.GetJSON(modelsPath, "providers."+magpieID+"."+k) },
 				"baseUrl", at.v1(), "apiKey", key())
 		},
 		ListOnly: true,
 		Sync: func() error {
-			if err := syncJSON(modelsPath, "providers."+magpieID, block); err != nil {
+			if viaExt() {
+				if err := writeMagpie(); err != nil { // drops the stale block
+					return err
+				}
+			} else if err := syncJSON(modelsPath, "providers."+magpieID, block); err != nil {
 				return err
 			}
 			if err := extension(); err != nil {

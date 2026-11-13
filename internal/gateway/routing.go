@@ -412,6 +412,8 @@ var (
 	// the model's, and the model alone rests
 	claudeFamilyWords = lazyre.New(`(?:hit|reached) your ([a-z][a-z0-9.]*) limit`)
 	otherModels       = lazyre.New(`(?i)switch(?:ing)? to (?:the )?other models?|切换(?:到)?其他模型`)
+	// words of a window that counts every model of a Claude account
+	claudeWindowWords = lazyre.New(`5.?hour|five.?hour|session|weekly|7.?day|seven.?day|usage limit|your limit|organization|overage|extra usage`)
 	// modelCooling is a relay that pools credentials per model saying
 	// those of the requested model cooled down: CLIProxyAPI's 429
 	// model_cooldown, "All credentials for model model-a are cooling down
@@ -1622,7 +1624,7 @@ func (s *Server) restAfterMarked(c candidate, status int, header http.Header, bo
 			// key's own limit apart): the sink keeps the same scope, or
 			// one model's 429 would send the remote's other models, never
 			// limited, behind the others too
-			if remoteModelRest(c, failRate, header) || modelLimited(c, failRate, body) {
+			if remoteModelRest(c, failRate, header) || modelLimitedBy(c, failRate, header, body) {
 				sink(c.restID(), now)
 			} else {
 				sink(c.restKey(), now)
@@ -1779,7 +1781,7 @@ func (s *Server) restAfterMarked(c candidate, status int, header http.Header, bo
 	// that model's: its siblings on the same key still answer upstream,
 	// and the model's own sentence rests with the model, not on every
 	// sibling's refusal (#3039)
-	if modelLimited(c, why, body) {
+	if modelLimitedBy(c, why, header, body) {
 		id = c.restID()
 	}
 	// out of credit, or of a quota, on a model that costs credits where
@@ -1881,6 +1883,33 @@ func modelCooledDown(why string, body []byte) bool {
 // model it limited (modelNamed).
 func modelLimited(c candidate, why string, body []byte) bool {
 	return modelCooledDown(why, body) || modelNamed(c, why, body)
+}
+
+// modelLimitedBy is modelLimited, and a Claude account's plain rate limit
+// (claudeModelRate) too, which the reply's headers help tell.
+func modelLimitedBy(c candidate, why string, header http.Header, body []byte) bool {
+	return modelLimited(c, why, body) || claudeModelRate(c, why, header, body)
+}
+
+// claudeModelRate says a Claude account's 429 rate_limit_error, which names
+// no window, is the limit of the model it was sent for: Anthropic counts
+// rate limits per model (kaitokiku on X: Fable rate limited rested the
+// account, and Opus showed "限流 · 42 分钟后恢复" with it, though Opus
+// answered). A refusal of the account's allowance rests the account: the
+// 5-hour, session, weekly or usage words (failQuota, never failRate), or
+// anthropic-ratelimit-unified headers whose representative claim is a
+// window that counts every model.
+func claudeModelRate(c candidate, why string, header http.Header, body []byte) bool {
+	if why != failRate || c.model == "" || c.p.Account == nil || c.p.Account.UsageAgent() != "claude" {
+		return false
+	}
+	if claim := strings.ToLower(header.Get("anthropic-ratelimit-unified-representative-claim")); claim != "" {
+		switch claim {
+		case "five_hour", "seven_day", "overage", "session", "weekly":
+			return false
+		}
+	}
+	return !claudeWindowWords.Match(bytes.ToLower(wordsOf(body)))
 }
 
 // modelNamed says a rate or quota refusal names c's model in the vendor's
@@ -2076,7 +2105,7 @@ func vendorSaidWhen(header http.Header, body []byte) bool {
 // count where it is, so one request's own retries don't stretch it.
 func (s *Server) rateRest(c candidate, header http.Header, body []byte, sharedPool bool, now time.Time) (time.Duration, string, int) {
 	id := c.restKey()
-	if c.isOpenRouterFree() && sharedPool || remoteModelRest(c, failRate, header) || modelLimited(c, failRate, body) {
+	if c.isOpenRouterFree() && sharedPool || remoteModelRest(c, failRate, header) || modelLimitedBy(c, failRate, header, body) {
 		id = c.restID()
 	}
 	n := 1
@@ -2401,6 +2430,7 @@ type left struct {
 	// unreached: how many of soon's windows Smart passes over, as they
 	// can't be used up before they renew any more (Allowance.Unreached)
 	unreached int
+	lapsing   float64   // points of used lost soon unspent (Allowance.Lapsing)
 	lapse     time.Time // when the soonest of what is left is lost (Allowance.Lapse)
 	pace      float64   // weekly pace: share of its week left per hour until it renews
 	due       time.Time // when the window that pace went by renews; zero when not known
@@ -2520,7 +2550,7 @@ func weighRouted(p provider.Provider, cs []candidate, model string, from provide
 			pc, due := a.Pace(c.model, now)
 			amt, of, unit := a.Count(c.model, now)
 			rs := a.Restarts(now)
-			l := left{used: u, renews: r, fullest: a.Fullest(c.model, now), soon: a.Renewal(c.model, now), unreached: a.Unreached(c.model, now), lapse: a.Lapse(c.model, now), pace: pc, due: due, amount: amt, of: of, unit: unit,
+			l := left{used: u, renews: r, fullest: a.Fullest(c.model, now), soon: a.Renewal(c.model, now), unreached: a.Unreached(c.model, now), lapse: a.Lapse(c.model, now), lapsing: a.Lapsing(c.model, now), pace: pc, due: due, amount: amt, of: of, unit: unit,
 				restarts: rs, dueRestart: !rs.IsZero() && due.Equal(rs), credits: spendsCredits(c.p, a)} // one not known counts as unused
 			l.dueExpiry = !l.dueRestart && !l.lapse.IsZero() && due.Equal(l.lapse)
 			l.weekLow = u >= lowShare && u < usedShare && a.CapUsed(c.model, now) < lowShare
@@ -2551,7 +2581,7 @@ func weighRouted(p provider.Provider, cs []candidate, model string, from provide
 			pace = provider.FreshPace
 		}
 		seats[i] = routes.Seat{Key: c.rest, Account: c.p.Account != nil, Known: known, Learns: learns(c, wg.lefts),
-			Used: l.used, WeekLow: l.weekLow, Soon: l.soon, Unreached: l.unreached, Lapse: l.lapse, Pace: pace, Weight: keyWeight(c), Resting: resting(c), Tokens: routed.used[c.restKey()].now(now), Credits: l.credits, First: l.first,
+			Used: l.used, WeekLow: l.weekLow, Soon: l.soon, Unreached: l.unreached, Lapse: l.lapse, Lapsing: l.lapsing, Pace: pace, Weight: keyWeight(c), Resting: resting(c), Tokens: routed.used[c.restKey()].now(now), Credits: l.credits, First: l.first,
 			Left: l.bal, LeftIn: l.balIn, Spent: spentRest(c), Lead: c.p.UseFirst}
 	}
 	routed.Unlock()
