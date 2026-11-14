@@ -155,7 +155,7 @@ const (
 func (g Group) Waits() time.Duration {
 	n := g.Patience
 	if n == 0 {
-		n = settings.Load().GroupPatience
+		n = settings.Shared().GroupPatience
 	}
 	switch {
 	case n < 0:
@@ -178,7 +178,7 @@ func (g Group) FirstTokenOr() int {
 	if g.FirstToken != 0 {
 		return g.FirstToken
 	}
-	return settings.Load().GroupFirstToken
+	return settings.Shared().GroupFirstToken
 }
 
 // Sinks is whether one of the group's accounts or keys rate limited with
@@ -186,7 +186,7 @@ func (g Group) FirstTokenOr() int {
 // NoSink, else the default for every group (settings' GroupSink). Whether
 // its routing can sink at all is the gateway's to say.
 func (g Group) Sinks() bool {
-	return g.Sink || !g.NoSink && settings.Load().GroupSink
+	return g.Sink || !g.NoSink && settings.Shared().GroupSink
 }
 
 // ContextSmallest is a group's Context when agents are told the window of
@@ -1426,6 +1426,31 @@ func ResolveRoute(id string) (Provider, string, bool) {
 		return Provider{}, "", false
 	}
 	return p, m, true
+}
+
+// Unpicked reports whether id, "provider/model", names a model the user
+// has since unchecked in that provider's list (unpicked), and which
+// provider: Resolve still takes it, so an agent left on it goes on asking
+// the vendor for the old model, while the user picked the provider's
+// others (JNDliuliuM on X: Codex CLI still on it after a restart).
+func Unpicked(id string) (pid string, ok bool) {
+	entries := providerEntries()
+	p, m, found := resolveIn(entries, ThroughSelf(strings.TrimSuffix(strings.TrimSpace(id), "[1m]")))
+	if !found {
+		return "", false
+	}
+	find := func(pid, model string) int {
+		for i := range entries {
+			if entries[i].Provider.ID == pid && entries[i].Model == model {
+				return i
+			}
+		}
+		return -1
+	}
+	if !unpicked(find, p, m) {
+		return "", false
+	}
+	return p.ID, true
 }
 
 // groupEntries are the catalog's groups: each with a member ready, named

@@ -382,6 +382,7 @@ var notYet = map[string]string{
 	"POST /api/masking/preview":                  U,  // masking.go
 	"POST /api/masking/values":                   U,  // masking.go
 	"GET /api/library/bili":                      L,  // library.go
+	"GET /api/library/bili/settings":             L,  // library.go
 	"GET /api/library/icon":                      W,  // library.go
 	"GET /api/library/market/servers":            L,  // library.go
 	"GET /api/library/market/skills":             L,  // library.go
@@ -392,6 +393,7 @@ var notYet = map[string]string{
 	"GET /api/library/skill":                     L,  // library.go
 	"POST /api/library/bili":                     L,  // library.go
 	"POST /api/library/bili/install":             L,  // library.go
+	"POST /api/library/bili/settings":            L,  // library.go
 	"POST /api/library/market/about":             L,  // library.go
 	"POST /api/library/mcp-account":              L,  // library.go
 	"POST /api/library/mcp-signin":               L,  // library.go
@@ -412,6 +414,7 @@ var notYet = map[string]string{
 	"POST /api/library/skills/check":             L,  // library.go
 	"POST /api/library/skills/probe":             L,  // library.go
 	"POST /api/library/plugins/probe":            L,  // library.go
+	"POST /api/library/subagents/probe":          L,  // library.go
 	"GET /api/memory":                            L,  // memory.go
 	"POST /api/memory":                           L,  // memory.go
 	"POST /api/memory/digest":                    L,  // memory.go
@@ -512,6 +515,7 @@ var notYet = map[string]string{
 	"POST /api/tune/apply":                       U,  // tune.go
 	"POST /api/tune/undo":                        U,  // tune.go
 	"POST /api/uninstall/finish":                 A,  // uninstall.go
+	"GET /api/usage/checkins/off":                U,  // usage.go: the Usage page's switched-off check-ins; `magpie accounts checkin` does every account
 	"GET /api/usage/deleted/into":                U,  // usage.go
 	"GET /api/usage/heatmap":                     U,  // usage.go
 	"GET /api/usage/quotas/history/holds":        U,  // usage.go

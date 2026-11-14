@@ -105,6 +105,44 @@ type modelJSON struct {
 	// vendor's list's, else models.dev's, within Listed; Model settings'
 	// Max output shows it when none is set (sayagoodbyeplz on Discord)
 	ListedOutput int `json:"listedOutput,omitempty"` // absent when Output
+	// Keys are the ids of the provider's keys in use whose own list has
+	// the model, in the keys' order, when some of them don't (cliddO11 on
+	// X): absent when every key lists it. At most keysShown, with KeyCount
+	// how many there are when more.
+	Keys     []string `json:"keys,omitempty"`
+	KeyCount int      `json:"keyCount,omitempty"`
+}
+
+// keysShown is the most key ids a model of the editor names: past that the
+// editor says how many, and a provider of a thousand keys sends no list of
+// them with each model.
+const keysShown = 6
+
+// keysApart is which of on (the provider's keys in use, in order; at is
+// each one's place in it) listed a model, by listed (catalog.Model.Keys),
+// and how many: none when every one of them did or none did, or when on is
+// a single key.
+func keysApart(listed, on []string, at map[string]int) ([]string, int) {
+	if len(on) < 2 || len(listed) == 0 {
+		return nil, 0
+	}
+	idx := make([]int, 0, len(listed))
+	for _, id := range listed {
+		if i, ok := at[id]; ok {
+			idx = append(idx, i)
+		}
+	}
+	slices.Sort(idx)
+	idx = slices.Compact(idx)
+	if len(idx) == 0 || len(idx) == len(on) {
+		return nil, 0
+	}
+	n := len(idx)
+	ids := make([]string, 0, min(n, keysShown))
+	for _, i := range idx[:min(n, keysShown)] {
+		ids = append(ids, on[i])
+	}
+	return ids, n
 }
 
 type providerJSON struct {
@@ -414,6 +452,10 @@ type providerJSON struct {
 	// of the hour (rateNowOf), 0 for 1×: read on this computer's clock,
 	// which calls are counted on, not the browser's
 	RateNow float64 `json:"rateNow,omitempty"`
+	// each key's own rate on the official price, by its id, where it
+	// bills apart from PriceRate (@tnt12231 on X)
+	KeyPriceRates map[string]float64 `json:"keyPriceRates,omitempty"`
+
 	// what it charges against the official price, 0 for that (#819)
 	PriceRate float64     `json:"priceRate,omitempty"`
 	Models    []modelJSON `json:"models"`            // everything the vendor lists, exposed ones flagged
@@ -437,8 +479,12 @@ type providerJSON struct {
 	// (provider.HiddenVideomakers)
 	FilmIDs           []string `json:"filmIds,omitempty"`
 	HiddenVideomakers []string `json:"hiddenVideomakers,omitempty"`
-	Unlisted          bool     `json:"unlisted"` // its models serve only through routing groups
-	NoModels          bool     `json:"noModels"` // Select none: none of its models served (#1818)
+	// what the user said those image and video models make
+	// (provider.ModelKind), by id: they aren't among Models, whose kind is
+	// said there, and a chip's right-click starts from it (iceloon on X)
+	MediaKinds map[string]string `json:"mediaKinds,omitempty"`
+	Unlisted   bool              `json:"unlisted"` // its models serve only through routing groups
+	NoModels   bool              `json:"noModels"` // Select none: none of its models served (#1818)
 	// Best in family: with nothing picked, only the newest model of each
 	// family it lists is served (provider.Provider.BestInFamily)
 	BestInFamily bool `json:"bestInFamily"`
@@ -898,7 +944,7 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 		Proxy: p.Proxy, AccountProxies: p.AccountProxies, AccountModels: p.AccountModels, AccountCaps: p.AccountCaps, AccountWindowCaps: p.AccountWindowCaps, AccountWindowAmounts: p.AccountWindowAmounts, AccountNames: p.AccountNames, Headers: p.Headers, ExtraBody: p.ExtraBody, ReplyHeaders: p.ReplyHeaders, PassHeaders: p.PassHeaders, Searches: p.Searches, Cline: p.ClinePinnable(), PinUpstream: p.PinUpstream, Unredacted: p.Unredacted, CountFree: p.CountFree, Billing: p.Billing, BillingKind: p.BillingKind(), InsecureTLS: p.InsecureTLS, TakesInsecureTLS: p.TakesInsecureTLS(), HTTP1: p.HTTP1, ClientCert: tilde(p.ClientCert), ClientKey: tilde(p.ClientKey), ServerCA: tilde(p.ServerCA), TakesClientCert: p.TakesClientCert(), ServerPin: p.ServerPin, TakesServerPin: p.TakesServerPin(), Resolve: p.Resolve, TakesResolve: p.TakesResolve(), Socket: p.Socket, TakesSocket: p.TakesSocket(), LimitRestOff: p.LimitRestOff, UpstreamProviders: p.UpstreamProviders, ImageFilesOff: p.ImageFilesOff, TakesImageFiles: p.TakesImageFiles(), NativeCompaction: p.NativeCompaction, CarriesCompaction: p.CarriesCompaction(), PassUserAgent: !p.MagpieUserAgent, OwnClient: p.OwnClient(), PassErrors: p.PassErrors, TakesPassErrors: p.TakesPassErrors(), AuthHeader: p.AuthHeader, BothAuth: p.BothAuth(), BalanceURL: p.BalanceURL, BalancePath: p.BalancePath, BalanceMethod: p.BalanceMethod, NoBalanceProbe: p.NoBalanceProbe, ModelsURL: p.ModelsURL, ListOff: p.ListsOff(), TakesListOff: p.Account == nil && !p.IsPlugin() && !p.DecideOnly(), TakesModelHeaders: p.Account == nil, DecideAPIKind: p.DecideAPIKind(),
 		Ready: p.Ready(), Chosen: p.PicksOf(avail), Agents: make([]providerAgent, 0, len(agents)),
 		Fallback: p.Fallback, Routing: p.Routing, Sink: p.Sink, UseFirst: p.UseFirst, NoStandIn: p.NoStandIn, Affinity: p.Affinity, KeepLogin: p.KeepLogin, KeepLoginAs: p.KeepLoginAs, SwitchOnly: p.SwitchOnly, RestartApp: p.RestartApp, Self: p.SelfAnswered(), KeepSelf: p.KeepSelf, ThisDevice: p.ThisDevice, CapStop: p.CapStop, CapCareful: p.CapCareful, Unlisted: p.Unlisted, NoModels: p.ServesNone(), BestInFamily: p.BestInFamily && len(p.Models) == 0 && !p.NoModels, Off: p.Off, Contexts: p.Contexts,
-		MaxConcurrency: p.MaxConcurrency, PluginConcurrency: p.PluginConcurrency(), MaxAccounts: p.MaxAccounts, PluginAccounts: p.PluginAtOnce(), PriceRate: p.PriceRate,
+		MaxConcurrency: p.MaxConcurrency, PluginConcurrency: p.PluginConcurrency(), MaxAccounts: p.MaxAccounts, PluginAccounts: p.PluginAtOnce(), PriceRate: p.PriceRate, KeyPriceRates: p.KeyPriceRates,
 		RateWindows: p.RateWindows, RateNow: rateNowOf(p, time.Now()),
 		AccountConcurrency: p.AccountConcurrency, AccountWeights: p.AccountWeights, QueueLimit: p.QueueLimit, QueueWait: p.QueueWait, MaxRPM: p.MaxRPM,
 		Outputs: provider.OutputsOf(p.ID), Compacts: provider.CompactsOf(p.ID),
@@ -1108,6 +1154,17 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 	// each model's provider/model ref, made once: the settings' maps and
 	// every agent's hidden list are looked up by it
 	var refs []string
+	// the keys in use, whose lists say which model each has (fetchPerKey)
+	var onKeys []string
+	for _, k := range out.KeyList {
+		if k.On {
+			onKeys = append(onKeys, k.ID)
+		}
+	}
+	keyAt := make(map[string]int, len(onKeys))
+	for i, id := range onKeys {
+		keyAt[id] = i
+	}
 	named := func(m catalog.Model, on bool) modelJSON {
 		ref := p.ID + "/" + m.ID
 		refs = append(refs, ref)
@@ -1124,6 +1181,9 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 		j := modelJSON{ID: m.ID, Name: m.Name, Efforts: provider.EffortsOf(m), On: on, Context: window, Output: provider.OutputWithin(window, p.ReplyLimitIn(m, set)), Listed: provider.ListedWindow(m), ListedOutput: provider.OutputWithin(provider.ListedWindow(m), p.ReplyLimitIn(m, settings.Settings{})), Max: m.MaxContext, Free: m.Free, Rate: m.Rate, RateWas: m.RateWas, Images: images, ImageSet: imageSet, Own: own, Best: newest[m.ID], Inputs: mediaInputs(m.InputModalities)}
 		list, listed, free := pricer.Prices(set, m.ID)
 		j.Zero = !m.Free && free
+		if j.Keys, j.KeyCount = keysApart(m.Keys, onKeys, keyAt); j.KeyCount == len(j.Keys) {
+			j.KeyCount = 0
+		}
 		// a plugin reports a model's load by its own id, not one the user
 		// lists it by (axelburks on Discord)
 		ownID := p.OwnModelID(m.ID)
@@ -1305,6 +1365,14 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 			out.HiddenVideomakers = append(out.HiddenVideomakers, m.ID)
 		}
 	}
+	for _, id := range append(slices.Clone(out.DrawIDs), out.FilmIDs...) {
+		if k := p.ModelKind(id); k != "" {
+			if out.MediaKinds == nil {
+				out.MediaKinds = map[string]string{}
+			}
+			out.MediaKinds[id] = k
+		}
+	}
 	if t, ok := p.Listed(); ok {
 		out.Fetched = &t
 	}
@@ -1439,7 +1507,7 @@ func providersState() providersJSON {
 	}
 	cat, models := provider.CatalogGroups()
 	s.Gateway = gatewayJSON{URL: gateway.URL(), OnNetwork: gateway.OnNetwork(), Models: models, Calls: []gateway.Call{}, Groups: []gwGroupJSON{}}
-	s.Gateway.LAN = settings.Load().LAN || s.Gateway.OnNetwork
+	s.Gateway.LAN = settings.Shared().LAN || s.Gateway.OnNetwork
 	if s.Gateway.LAN {
 		s.Gateway.LANURLs = gateway.LANURLs()
 		s.Gateway.LANPublic = gateway.PublicURLs(s.Gateway.LANURLs)
@@ -1706,6 +1774,9 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 		if f == "" {
 			http.NotFound(rw, r)
 			return
+		}
+		if ctype == "" {
+			ctype = assetType(f)
 		}
 		if ctype != "" {
 			rw.Header().Set("Content-Type", ctype)
@@ -2148,6 +2219,14 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				return
 			}
 			in.PriceRate = rate
+			// each key's own rate, by its id (@tnt12231 on X): {} takes
+			// them all off, left out they are kept
+			for k, r := range in.KeyPriceRates {
+				if bad := provider.KeyPriceRateOK(r); bad != "" {
+					fail(rw, fmt.Errorf("%s, not %v (key %s)", bad, r, k))
+					return
+				}
+			}
 			wins, keepWins, err := rateWindowsOf(req.RateWindows)
 			if err != nil {
 				fail(rw, err)
@@ -2296,6 +2375,9 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				}
 				if keepRate && old != nil {
 					in.PriceRate = old.PriceRate
+				}
+				if in.KeyPriceRates == nil && old != nil {
+					in.KeyPriceRates = old.KeyPriceRates
 				}
 				if keepWins && old != nil {
 					in.RateWindows = old.RateWindows
