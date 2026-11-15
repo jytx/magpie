@@ -199,6 +199,10 @@ type agentJSON struct {
 	Icon   string      `json:"icon"`
 	Path   string      `json:"path"`
 	Fields []fieldJSON `json:"fields"`
+	// Own: the user's own settings of the agent's (agent.Field.Own,
+	// Claude Code's permission mode), apart from Fields so no picker on
+	// its row draws them: agentcompact.js folds them under Advanced
+	Own []fieldJSON `json:"own,omitempty"`
 	// Drift: its config no longer does what magpie set, and how to set it again
 	Drift *agent.Drift `json:"drift,omitempty"`
 	// Wired: magpie is in its config, which its menu's Disconnect takes out
@@ -1209,6 +1213,12 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	pluginPageRoutes(mux, isWeb(w))
 	feedbackRoutes(mux)
 	appearanceRoutes(mux)
+	// the app's page closed or hidden: what its pages keep goes soon
+	// (awayPage); a write of nothing, so held's Changed passes it by
+	mux.HandleFunc("POST /api/page-away", func(rw http.ResponseWriter, r *http.Request) {
+		awayPage()
+		rw.WriteHeader(http.StatusNoContent)
+	})
 	// boot.js hands the page the saved language and theme before it paints:
 	// they came only with the settings, so the tabs showed English first
 	mux.HandleFunc("GET /boot.js", func(rw http.ResponseWriter, r *http.Request) {
@@ -1880,6 +1890,8 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		s.UpdateSkip = strings.TrimSpace(in.Version)
 		if s.UpdateSkip != "" {
 			updates.quietAgain() // a dismissal holds for the quiet, not only the next release
+		} else {
+			updates.unhush() // Show again
 		}
 		if err := settings.Save(s); err != nil {
 			fail(rw, err)
@@ -1911,14 +1923,15 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		writeJSON(rw, settingsState())
 	})
 	// whether the gateway's /v1/models lists each model by its id without
-	// the provider as well (settings.BareModelIDs, love1sbug on X)
+	// the provider as well (settings.BareModelIDs, love1sbug on X), or
+	// with only, by that id alone (BareModelIDsOnly, qQianye on X)
 	mux.HandleFunc("POST /api/settings/bare-ids", func(rw http.ResponseWriter, r *http.Request) {
-		var in struct{ On bool }
+		var in struct{ On, Only bool }
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			fail(rw, err)
 			return
 		}
-		if err := provider.SetBareModelIDs(in.On); err != nil {
+		if err := provider.SetBareIDs(in.On, in.Only); err != nil {
 			fail(rw, err)
 			return
 		}
@@ -2330,6 +2343,21 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		}
 		writeJSON(rw, map[string]bool{"ok": true})
 	})
+	// Warm up all: each of a Codex or Claude agent's accounts in use and not
+	// in a window already warmed at once, and what each came to
+	mux.HandleFunc("POST /api/warm-all", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct{ Agent string }
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		rs, err := provider.WarmAll(r.Context(), in.Agent)
+		if err != nil {
+			fail(rw, err)
+			return
+		}
+		writeJSON(rw, map[string]any{"results": rs})
+	})
 	// whether a Codex account spends one of its resets by itself once its
 	// week is used up, the Usage card's toggle, set on its own
 	// a Codex account's own daily warm-up time: "06:00", "off", or "" to
@@ -2724,6 +2752,11 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		if err := settings.Save(s); err != nil {
 			fail(rw, err)
 			return
+		}
+		// the menu bar leaves out what the Overview hides (trayShown): it
+		// follows a card hidden or shown again at once
+		if (in.CardsHidden != nil || in.WindowsHidden != nil) && onTrayUsage != nil {
+			onTrayUsage()
 		}
 		writeJSON(rw, settingsState())
 	})
@@ -3261,7 +3294,7 @@ func held(h http.Handler) http.Handler {
 			// 5x the CPU.
 			defer tightenGC()()
 		}
-		if !(api && r.Method == http.MethodGet) && r.URL.Path != "/api/update/using" {
+		if !(api && r.Method == http.MethodGet) && r.URL.Path != "/api/update/using" && r.URL.Path != "/api/page-away" {
 			// anything that may have written drops what was held, once it
 			// has answered with it (a page's word of input writes nothing)
 			defer provider.Changed()
@@ -3302,7 +3335,7 @@ func state() stateJSON {
 		}
 		vals := a.Values()
 		now[a.ID] = vals
-		aj := agentJSON{ID: a.ID, Name: a.Name, Icon: a.Icon, Path: tilde(a.Path), Fields: agentFields(a, vals)}
+		aj := agentJSON{ID: a.ID, Name: a.Name, Icon: a.Icon, Path: tilde(a.Path), Fields: agentFields(a, vals), Own: ownFields(a, vals)}
 		aj.Models = agentModelCount(a, aj.Fields)
 		aj.Menu = a.ListsModels
 		aj.NoNames = a.NoNames

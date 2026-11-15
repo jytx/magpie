@@ -683,6 +683,7 @@ magpie gateway-key limit <id> week --tokens 2m --cost 5   # its own limit
 magpie gateway-key limit <id> list     # each limit, used, left and reset
 magpie gateway-key limit <id> 10d --tokens 5m   # every 10 days, from now
 magpie gateway-key limit <id> total --cost 300  # $300 in total, until reset
+magpie gateway-key limit <id> account --account codex/me@example.com --window 5h --tokens 2m   # with that account's 5 hours
 magpie gateway-key limit <id> 5h --tokens 200k  # every 5 hours, from now
 magpie gateway-key limit <id> add week --cost 20   # one more limit; all must pass
 magpie gateway-key limit <id> add month --cost 20 --model openai/*   # a limit of only OpenAI's models
@@ -710,7 +711,16 @@ N from 1 to 3650) or every N hours (#2102; N from 1 to 8760, such as 5 for
 a subscription's 5-hour pace), or **in total** (`total`, @Cyrus_4433 on X):
 a limit that never resets by the clock, counted from when it is set and
 started again only by **Reset usage** (`magpie gateway-key limit <id> total
---cost 300`); its 429 says it stays refused until it is reset or raised. An N-day or N-hour cycle starts when the
+--cost 300`); its 429 says it stays refused until it is reset or raised. Or it follows **an account's window** (`account`, ljayic on X): one
+subscription account's own 5 hours, week or month, starting and resetting
+when that account's last reading says its window does (Gateway keys → the
+key's limit → Window → An account's window, then the account's window; CLI
+`--account <provider>/<account> --window <name>`). When that window can't
+be read (no reading yet, or its reset has passed with none since), the
+limit isn't reset or lifted: it counts from the reset that passed (or from
+when the limit was set), its row says it resets with the account's window,
+and a refused call is told to retry in 5 minutes while magpie reads the
+accounts again. An N-day or N-hour cycle starts when the
 limit is set and runs N×24 or N hours, then the next one starts where it
 ended, so a restart, a time-zone change or a daylight-saving shift doesn't
 move it. Changing only
@@ -1142,16 +1152,24 @@ can't drift:
 | `POST provider/{action}` | `save`, `delete`, `on`, `off`, `name`, `efforts`, `images`, `arrange`, `route`, `affinity`, `sink`, `usefirst`, `test`, `models`, `list`, and each key's or account's setting (`accountcap`, `accountname`, `windowcap`, `accountweight`, `keyspendcap`, `keyexpiring`, …) |
 | `POST keys/{action}`, `POST login/{action}`, `GET login/usage` | a provider's keys, and its signed-in accounts |
 | `POST signin` `{"agent": …}`, `GET signin/{id}`, `POST signin/{id}/cancel`, `POST signin/{id}/callback` | OAuth sign-in: the answer holds the vendor's page and the code to type there. Nothing is opened on this computer and no password is taken |
-| `GET gateway-keys[/models\|/mcp]`, `POST gateway-keys/{action}` | gateway keys: `add-key`, `rename-key`, `rotate-key`, `limit-key`, `models-key`, `accounts-key`, `mcp-key`, `access-key`, `on-key`, `off-key`, `remove-key`, … |
+| `GET gateway-keys[/models\|/mcp\|/account-windows]`, `POST gateway-keys/{action}` | gateway keys: `add-key`, `rename-key`, `rotate-key`, `limit-key`, `models-key`, `accounts-key`, `mcp-key`, `access-key`, `on-key`, `off-key`, `remove-key`, … |
 | `GET account-groups`, `POST account-groups/{action}` | named account groups |
+| `GET routing-groups`, `GET routing-groups/{id}` | the Routing page's groups and combos, as the app shows them; one by its id or `group/<id>` |
+| `POST routing-groups/create`, `POST routing-groups/update` | a group or combo made, or changed: `create` takes the editor's body (`name`, `members`, …) and is 409 for an id in use; `update` takes `id` and only the fields to change, the rest kept (`from` and a new `id` rename it, and the combos naming it follow) |
+| `POST routing-groups/{action}` | the Routing page's own: `save`, `delete` (`id` or `ids`; refused while a combo names it), `copy`, `switch`, `arrange`, `pick`, `defaults`, `template`, `share`, `import`, `show` |
 
-Bodies are the app's own JSON. A route or action not listed is a 404. Never
+Bodies are the app's own JSON, and each is checked as the app checks it (a
+member a provider doesn't serve, an account it doesn't have, a combo of
+itself are 400). A member may name one account, `provider/model#<account>`.
+A route or action not listed is a 404: Routing's `found` and `skip`, which
+set this computer's agents, are not served. Never
 served: a provider's saved key, a gateway key's secret after its `add-key` or
 `rotate-key` answer, exporting sign-ins, and what changes this computer's
 other apps (moving, showing, restarting).
 
 Who may call it: a gateway key set with `magpie gateway-key admin <id>
-local|any`. `local` is from this computer only; `any` also from the network
+local|any`, or in the app from the key's menu, Advanced (Off, From this
+computer, From any computer); such a key says Manages magpie in its row. `local` is from this computer only; `any` also from the network
 when sharing is on. Only a key the user made can have it: a read-only,
 Magpie Browser, issued or expiring key, and the default sharing key, can't,
 and the API can't set the level on any key, so it can't raise its own
@@ -1160,9 +1178,9 @@ caller. A request with no key is 401, a key without the level 403
 any request with `Origin` (`null`, a foreign page, a listed page or
 `*.localhost` among them) or `Sec-Fetch-*` is 403, and so is one that
 reached loopback under another name (a rebound page's GET has neither).
-Answers are `Cache-Control: no-store`. This first part leaves out Routing
-Groups (the Routing page) and the import and export of sign-ins; they are
-tracked in [#6307](https://github.com/yetone/magpie/issues/6307).
+Answers are `Cache-Control: no-store`. The import and export of sign-ins
+is left out on purpose: it would hand a script every account's secrets
+([#6307](https://github.com/yetone/magpie/issues/6307)).
 
 ### Embeddings and rerank
 
@@ -1636,7 +1654,7 @@ export const agent = {
   prefix: "openai/",             // written before magpie's model id
   ua: ["aider", "litellm"],
 }
-export function connect({ gateway, model, models }) {
+export function connect({ gateway, model, models, decisionModels }) {
   return { "openai-api-base": gateway.v1, "openai-api-key": gateway.key }
 }
 ```
@@ -1657,6 +1675,20 @@ call costs. Each is left out when it isn't known (a routing group has no
 { "id": "deepseek/pro", "name": "pro · DeepSeek", "context": 0, "output": 0, "images": false, "efforts": [],
   "native_endpoints": ["/v1/chat/completions"],
   "pricing": { "prompt": "0.0000003", "completion": "0.0000012", "input_cache_read": "0.00000003" } }
+```
+
+`connect` also gets `decisionModels`: magpie's decision models (Jev, Clef,
+a vendor's or a plugin's model marked `decides`, as the routing groups'
+pickers offer them), and the routing groups made of them. They are kept
+out of `models`, which an agent offers for a conversation, and out of
+`/v1/models`. Each has `id`, `name`, `provider` (a group has `group: true`
+instead) and `endpoints`, the gateway paths it is asked on: `/v1/systemone`,
+and `/v1/decisions`, which the gateway translates to System One for it.
+It is `[]` when there are none:
+
+```json
+{ "id": "openrouter/~typesafe/jev-latest", "name": "Jev · OpenRouter", "provider": "openrouter",
+  "endpoints": ["/v1/systemone", "/v1/decisions"] }
 ```
 
 An agent that takes the gateway only from how it is started, not from a
@@ -2425,13 +2457,13 @@ to (an account added by setup-token doesn't count), magpie keeps it and
 says so. Add another account first, or sign out in Claude Code itself,
 then remove it.
 
-With more than one Codex account on, magpie also sets `openai_base_url`
-in Codex's config.toml, so a request the signed-in account has no
-allowance for goes on to the others through the gateway. *Only switch
-Codex's sign-in* under Providers › Codex (or `magpie accounts switch-only
-codex on`) leaves that out: magpie only moves Codex's own sign-in
-(`auth.json`) as above, and Codex's requests go straight to OpenAI, never
-through magpie (#1907). An `openai_base_url` you wrote yourself stays. The
+A Codex that isn't connected to magpie goes straight to OpenAI on its own
+sign-in, however many of its accounts are on: magpie only moves Codex's
+sign-in (`auth.json`) as above. Connected, a request the signed-in account
+has no allowance for goes on to the others through the gateway. *Only
+switch Codex's sign-in* under Providers › Codex (or `magpie accounts
+switch-only codex on`) keeps Codex's requests off magpie even then
+(#1907). An `openai_base_url` you wrote yourself stays. The
 Codex app and a running `codex app-server` read the sign-in when they
 start, so one already open stays on its account until it is opened again;
 a new `codex` session takes the new one. Connected to magpie, Codex's
@@ -3383,18 +3415,19 @@ release page's redirect when the API is rate-limited), with its
 check as the feed's: the ed25519 signature against the key built into the
 binary, the version in the signed message, each file's hash from the signed
 list. A release read this way must be signed whatever its version. The
-Stable channel and a `MAGPIE_UPDATE_FEED` of your own don't fall back.
+Stable and Daily channels and a `MAGPIE_UPDATE_FEED` of your own don't
+fall back.
 
-Settings → Network → *Update source* (`"updateSource"` in settings.json,
+Settings → About → *Update source* (`"updateSource"` in settings.json,
 `magpie settings set updateSource github`, this computer's own) chooses where an
 update comes from. Automatic (empty, the default) is what is described here:
 usemagpie.ai, then GitHub. `site` (usemagpie.ai only) never goes to GitHub,
 for the release or for a file. `github` (GitHub only) reads the release from
 `yetone/magpie-releases` without asking the feed, and downloads files from
 github.com (through a `--mirror` when one is given, then GitHub's API route);
-usemagpie.ai is not asked. On the Stable channel the list of releases is only
-the site's, so `github` still reads it from the feed and downloads from
-GitHub. A `MAGPIE_UPDATE_FEED` of your own is never overridden. Every source
+usemagpie.ai is not asked. On the Stable and Daily channels the release is
+only the site's pick, so `github` still reads it from the feed and downloads
+from GitHub. A `MAGPIE_UPDATE_FEED` of your own is never overridden. Every source
 is held to the same signature and hashes (`Release.verify`).
 
 Release files are downloaded from usemagpie.ai's copy on Cloudflare R2
@@ -3499,11 +3532,23 @@ trusted to the site over HTTPS and the SHA-256 the site gives.
 
 ### Update channel
 
-magpie takes every version as it comes out unless you choose Stable, in
-*Settings → About → Update channel* or with `magpie update channel stable`
+magpie takes every version as it comes out unless you choose Daily or
+Stable, in *Settings → About → Update channel* or with
+`magpie update channel daily` or `magpie update channel stable`
 (`magpie update channel every` goes back; `magpie update channel` prints
-the one in use). It is saved as `"updateChannel": "stable"` in
-settings.json, and the app and `magpie update` both follow it.
+the one in use). It is saved as `"updateChannel": "daily"` or `"stable"`
+in settings.json, and the app and `magpie update` both follow it.
+
+Daily is one version a day. Each day at 20:00 UTC it becomes the newest
+release out by then whose Test run on `main` passed (the run on the
+release's own commit) and that has all of its 17 files; a day with no
+such release keeps the day before's. A release marked urgent goes to Daily
+at once. What's new lists every version since yours as one list, and the
+Version row names the newest out on Every version as it does on Stable.
+The site works it out every quarter hour
+(`https://usemagpie.ai/api/latest?channel=daily`,
+`usemagpie.ai/download/daily/<platform>`); the Docker image's `daily` tag
+follows it.
 
 Stable is one version a week. Each Monday at 00:00 UTC it becomes the
 newest release that had been out for three days by then (Friday 00:00
@@ -3802,9 +3847,11 @@ VPN such as Tailscale or WireGuard; a reverse proxy or tunnel forwarding to
 Magpie over loopback needs a gateway key from its clients, as the network does.
 
 The image's tags: `latest` is the newest release, and magpie releases
-several times a day. `daily` is the newest release as of 20:00 UTC, moved
-once a day (`.github/workflows/docker-daily.yml`), for Renovate or
-Watchtower to update at most daily (with Renovate, pin its digest);
+several times a day. `daily` is the desktop app's Daily channel: once a
+day at 20:00 UTC, the newest release whose CI run passed, or an urgent one
+at once (`.github/workflows/docker-daily.yml` follows
+`usemagpie.ai/api/latest?channel=daily`), for Renovate or Watchtower to
+update at most daily (with Renovate, pin its digest);
 `stable` is the desktop app's Stable channel, one a week. `0.1.N` is one
 release, `0.1` the newest of its line, and `edge` every change on `main`.
 
@@ -3846,6 +3893,7 @@ application:
     - /alpha/search
     - /mcp
     - /me
+    - /deepseek-chat
     - /join
     - /magpie-ca.crt
 services:
