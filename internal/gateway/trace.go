@@ -147,7 +147,7 @@ type Route struct {
 	// counts: streamed replies only (#196)
 	TTFT      int64 `json:"ttft,omitempty"`
 	FirstText int64 `json:"firstText,omitempty"`
-	// FirstReasoning is the start of paced visible reasoning, absent for hidden reasoning.
+	// FirstReasoning: ms to the reply's first sign of reasoning, streamed or sealed (a reasoning delta, a reasoning item's or thinking block's start); 0 for none.
 	FirstReasoning  int64 `json:"firstReasoning,omitempty"`
 	ReasoningHidden bool  `json:"reasoningHidden,omitempty"`
 	// Flow: the ms its content took to come (Call.Flow)
@@ -328,6 +328,7 @@ type Weighed struct {
 	Model    string  `json:"model"`
 	Fixed    string  `json:"fixed,omitempty"` // the effort the group's member it is of is fixed at
 	Fast     bool    `json:"fast,omitempty"`  // the group's member it is of is sent fast
+	Ultra    bool    `json:"ultra,omitempty"` // and Ultrafast, where the account offers it (Group.Ultra, an Ultrafast pick)
 	Routing  string  `json:"routing"`         // its provider's: "", order, rotate, usage
 	Fallback bool    `json:"fallback,omitempty"`
 	Shared   bool    `json:"shared,omitempty"` // its provider has more than one on
@@ -517,7 +518,7 @@ type Try struct {
 	// (claude_entry.go). "" for a try that ran no Claude Code.
 	Entry    string `json:"entry,omitempty"`
 	EntryWhy string `json:"entryWhy,omitempty"`
-	// FirstReasoning is the start of paced visible reasoning, absent for hidden reasoning.
+	// FirstReasoning: ms to the reply's first sign of reasoning, streamed or sealed (a reasoning delta, a reasoning item's or thinking block's start); 0 for none.
 	FirstReasoning  int64 `json:"firstReasoning,omitempty"`
 	ReasoningHidden bool  `json:"reasoningHidden,omitempty"`
 	// Flow: the ms its content took to come (Call.Flow)
@@ -529,6 +530,10 @@ type Try struct {
 	Served  string `json:"served,omitempty"`
 	Swapped bool   `json:"swapped,omitempty"`
 	Routed  bool   `json:"routed,omitempty"`
+	// Wire: the model id it went out to the vendor under, when that is
+	// another than Model (usage.Record.Wire): a name the user gave the
+	// model upstream, or the variant a plugin picked
+	Wire string `json:"wire,omitempty"`
 	// Upstream: the provider an aggregator said answered behind it
 	// (OpenRouter's DeepInfra, Novita …)
 	Upstream string `json:"upstream,omitempty"`
@@ -614,7 +619,7 @@ type planned struct {
 }
 
 func weighed(c candidate, p provider.Provider, wg weighing, fallback bool, from provider.Protocol) Weighed {
-	w := Weighed{ID: c.rest, Provider: p.ID, Name: p.Name, Icon: p.Icon, Preset: p.Preset, Model: c.model, Fixed: c.effort, Fast: c.fast,
+	w := Weighed{ID: c.rest, Provider: p.ID, Name: p.Name, Icon: p.Icon, Preset: p.Preset, Model: c.model, Fixed: c.effort, Fast: c.fast, Ultra: c.fast && c.ultra,
 		Routing: p.Routing, Fallback: fallback, Shared: c.rest != p.ID, Rank: c.rank, NoURL: c.noURL, Reserve: c.reserve, UseFirst: c.p.UseFirst}
 	switch {
 	case c.p.Account != nil:
