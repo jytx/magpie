@@ -209,12 +209,12 @@ type meta struct {
 	// when the user types /name, never on the model's own (sunset3279 on
 	// Discord). False when the front matter doesn't parse, or the value
 	// isn't a bool: not known.
-	Manual bool `yaml:"disable-model-invocation" json:"-"`
+	Manual bool `yaml:"disable-model-invocation,omitempty" json:"-"`
 	// Typed is its user-invocable: false for a skill only the model
 	// calls, which no agent offers to type; nil when it isn't said.
-	Typed *bool `yaml:"user-invocable" json:"-"`
+	Typed *bool `yaml:"user-invocable,omitempty" json:"-"`
 	// Hint is its argument-hint, which Claude Code shows after /name.
-	Hint string `yaml:"argument-hint" json:"-"`
+	Hint string `yaml:"argument-hint,omitempty" json:"-"`
 }
 
 func readMeta(dir string) (meta, bool) {
@@ -606,13 +606,6 @@ func linked(p string) bool {
 // skills to it only for the agents whose one place it is (Kimi Code,
 // Goose, Cindy): one link there, whichever of them it's for.
 func sharedSkillsDir() string { return filepath.Join(home(), ".agents", "skills") }
-
-// inSharedDir is whether p is an entry of ~/.agents/skills, however its
-// folder is reached: the user's own, which other tools read too, that
-// magpie never deletes.
-func inSharedDir(p string) bool {
-	return realDir(filepath.Dir(p)) == realDir(sharedSkillsDir())
-}
 
 // sharedHas is whether the library's skill by that name is kept in
 // ~/.agents/skills, so every agent that reads the shared folder has it,
@@ -1795,6 +1788,12 @@ func (l *Library) offered(p *Probe, path string, shown bool) {
 // source and given to the agents like any other. The name can't be one the
 // library has, one an agent has of its own, or a folder in the way.
 func CreateSkill(name, description string, agents []string) (*Result, error) {
+	return createSkill(name, description, agents, "Write what the agent should do when this skill is used.\n", nil)
+}
+
+// createSkill is CreateSkill with body after the SKILL.md's heading, and
+// files beside it, by name.
+func createSkill(name, description string, agents []string, body string, files map[string]string) (*Result, error) {
 	name = strings.TrimSpace(name)
 	if err := checkName("skill", name); err != nil {
 		return nil, err
@@ -1822,13 +1821,19 @@ func CreateSkill(name, description string, agents []string) (*Result, error) {
 		if err != nil {
 			return err
 		}
-		text := "---\n" + string(head) + "---\n\n# " + name + "\n\nWrite what the agent should do when this skill is used.\n"
+		text := "---\n" + string(head) + "---\n\n# " + name + "\n\n" + body
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
 		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(text), 0o644); err != nil {
 			os.RemoveAll(dir)
 			return err
+		}
+		for n, b := range files {
+			if err := os.WriteFile(filepath.Join(dir, n), []byte(b), 0o644); err != nil {
+				os.RemoveAll(dir)
+				return err
+			}
 		}
 		ag := slices.Clone(agents)
 		slices.Sort(ag)
@@ -2930,10 +2935,13 @@ func removeFound(found []FoundSkill, name string, keep bool) error {
 			}
 			continue
 		}
-		if !keep && !inSharedDir(e.p) {
+		if !keep {
 			// not a link (above): the skill's own folder, deleted as asked.
-			// One in ~/.agents/skills, which other tools read too, is never
-			// deleted: it goes to the backups as ever
+			// One in ~/.agents/skills too (@Eternalfate__ on X: most skills
+			// are there, so the sheet never had the tick): it leaves that
+			// folder either way, and the other tools reading it lose it
+			// either way; kept, it only sat in the backups. A folder the
+			// entry links to is never reached here (above)
 			if err := os.RemoveAll(e.p); err != nil {
 				return err
 			}
