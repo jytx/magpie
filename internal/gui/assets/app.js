@@ -4888,6 +4888,10 @@ function openPicker(agent, field, anchor, ev, only) {
     const whose = !!name && !!c.group && c.group !== ROUTING_GROUPS && options.some((o) => o.group && o.group !== c.group && (o.label || "").toLowerCase() === name);
     options.unshift({ ...c, group: "", home: c.group, whose });
   }
+  // an effort's stops are the panel slider's: levels lowest first, and a
+  // value not offered in its place among them, not first, where max read
+  // as below high (mathfournity on X)
+  else if (effortPicker) options = cur ? effortStops({ value: cur, options }) : levelOrder(options);
   else if (i < 0 && cur && !only) options.unshift({ value: cur, note: t("current value") });
   // the agent's own default: magpie's wiring comes out and the key is removed
   if (FOLLOWS_MODEL.includes(field.label)) {
@@ -4982,12 +4986,19 @@ function effortName(option) {
 // thinking at all.
 const EFFORT_ORDER = ["off", "none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
-// effortStops are an effort field's options with its value among them when
-// it isn't one, as the panel's slider has its stops: a level in its place
-// (max above high), anything else — unset, auto, one magpie doesn't know —
-// first.
+// levelOrder: options with the levels among them lowest first, each other
+// option (Default, auto, one magpie doesn't know) where it was
+function levelOrder(o) {
+  const r = (x) => EFFORT_ORDER.indexOf(x.value), l = o.filter((x) => r(x) >= 0).sort((a, b) => r(a) - r(b));
+  return o.map((x) => r(x) < 0 ? x : l.shift());
+}
+
+// effortStops are an effort field's options, levels lowest first, with its
+// value among them when it isn't one, as the panel's slider and the effort
+// picker have their stops: a level in its place (max above high), anything
+// else — unset, auto, one magpie doesn't know — first.
 function effortStops(f) {
-  const options = f?.options || [];
+  const options = levelOrder(f?.options || []);
   if (!f || options.some((o) => o.value === f.value)) return options;
   const r = EFFORT_ORDER.indexOf(f.value);
   const i = r < 0 ? 0 : options.findIndex((o) => EFFORT_ORDER.indexOf(o.value) > r);
@@ -5031,9 +5042,8 @@ function effortBars(f) {
 // shows at once, bars and all; the write follows, in order, so a slow agent
 // config never holds the thumb (巨卡).
 function effortSeg(a, f) {
-  // a value that isn't one of the levels offered is a stop of its own, as
-  // the picker's current value is (shown as the lowest level, a touch wrote
-  // that level over it)
+  // a value that isn't one of the levels offered is a stop of its own, in
+  // its place among them, as the picker's current value is
   const options = effortStops(f);
   const last = Math.max(1, options.length - 1);
   const box = el("div", "effort-control");
@@ -6626,14 +6636,10 @@ function renderMovable() {
   for (const p of unmoved) window.unmovedLine ? box.append(unmovedLine(p)) : import("./unmoved.js").then(renderMovable, () => {});
   if (eg) box.append(eg);
   if (agy) box.append(agy);
-  // a plugin magpie gives nobody new (plugin.WithdrawnOf): it still
-  // works, and its user is told the risk and what to use instead
-  for (const w of wd) {
-    if (agy && w.id === "antigravity") continue;
-    const go = el("button", "text action", t("Use {name}", { name: w.instead }));
-    go.onclick = () => openPlugins("agy");
-    box.append(depLine("withdrawn", t("{name}'s plugin can get your account suspended", { name: w.name }), t("Google suspends accounts it sees used outside its own app. {name} runs your own agy instead.", { name: w.instead }), go));
-  }
+  // a plugin magpie gives nobody new (plugin.WithdrawnOf), on: it still
+  // works, and its user is told the risk and what to do (withdrawnLine,
+  // in agymove.js, imported when there is one)
+  for (const w of wd) if (!agy || w.id !== "antigravity") window.withdrawnLine ? box.append(withdrawnLine(w)) : import("./agymove.js").then(renderMovable, () => {});
   if (!ps.length || hid === ids) return;
   const names = ps.map((p) => p.name).join(t(", "));
   // one quiet line over the list, as calm as its rows: an amber dot, what
@@ -9751,6 +9757,9 @@ function drawEditor(p, presetID) {
   adv.append(el("summary", "", t("Advanced")));
   const advIn = el("div", "inner");
   adv.append(advIn);
+  // a plugin's panels for this provider (magpie.panels' provider), told
+  // which: rows of the form, before Advanced
+  const panels = p && magpie.slot?.("provider", { provider: { id: p.id, name: p.name || p.id } }) || "";
   // Routing, Rate limited and Stays: changed by few, so under Advanced, at
   // its top, and opening it when one isn't its default (the owner, 11-12)
   const routingAdvanced = (p) => {
@@ -9824,7 +9833,7 @@ function drawEditor(p, presetID) {
     // nowhere to show or test
     const urls = [p.chat, p.responses, p.anthropic].filter(Boolean);
     if (urls.length && !urls.some((u) => u.startsWith("plugin://"))) ed.append(...field(t("Endpoints"), renderEndpoints(p, p)));
-    ed.append(adv);
+    ed.append(panels, adv);
     groupAdvanced(advIn);
     const bar = el("div", "bar");
     // removing only hides it from magpie; the agent stays signed in
@@ -10157,7 +10166,7 @@ function drawEditor(p, presetID) {
   const socketable = () => !p?.account && (p?.preset || pr?.id) !== "google-vertex" && /^\s*https?:\/\//i.test(addressOf("responses"));
   const sockAt = document.createComment("");
   advIn.append(sockAt);
-  import("./socketrow.js").then(() => draft === certDraft && socketRow({ p, draft, at: sockAt, socketable, addressOf, show: (f) => { showSocket = f; f(); } }), statusErr);
+  import("./socketrow.js").then(() => draft === certDraft && socketRow({ p, draft, at: sockAt, socketable, addressOf, remote: () => remote, show: (f) => { showSocket = f; f(); } }), statusErr);
   // off, a 429 or quota refusal rests none of its keys (LimitRestOff, zoecats)
   if (custom) {
     const [rtk, rcb] = tick(t("Set it aside when out of quota or rate limited"), !draft.limitRestOff);
@@ -10405,7 +10414,7 @@ function drawEditor(p, presetID) {
     refreshEndpoints();
     ed.append(...row);
   }
-  ed.append(adv);
+  ed.append(panels, adv);
   groupAdvanced(advIn);
 
   if (custom) {
@@ -10630,8 +10639,6 @@ function drawEditor(p, presetID) {
   };
   saveBtn.onclick = save;
   bar.append(cancel, saveBtn);
-  // a plugin's panels for a provider (magpie.panels' provider), told which
-  if (p) { const slot = magpie.slot?.("provider", { provider: { id: p.id, name: p.name || p.id } }); if (slot) ed.append(slot); }
   ed.append(bar);
   setTimeout(() => (isNew ? (custom || another ? name : endpoint || vertexProject || key) : null)?.focus(), 0);
   return ed;
@@ -23451,7 +23458,6 @@ async function show(v) {
   if (gatewayMode && GATEWAY_HIDES.includes(v)) v = "providers";
   v = offView(v);
   if (v !== view) {
-    if (v === "plugins" && pluginUpdates) window.pluginTabTo?.("installed");
     if (view === "providers" && (editing !== null || importing || importingApps)) {
       if (!await cancelEdit(true)) return false;
     } else if (!$("#modal").hidden && !$("#modal").classList.contains("out")) {
@@ -23473,6 +23479,9 @@ async function show(v) {
     magpie.call(view, "leave");
   }
   if (v !== view && !jump) backTo = null;
+  // Plugins opened from another page: on Installed when an update waits, and
+  // the opening counted for its partners (plugins.js pmOpen, provider.CountPage)
+  if (v !== view && v === "plugins") window.pmOpen?.(pluginUpdates);
   view = v;
   renderBack();
   window.hideAccounts?.page();
@@ -24199,8 +24208,7 @@ function navSubs() {
       s.classList.toggle("cur", cur);
       s.setAttribute("aria-selected", String(cur));
       s.tabIndex = cur ? 0 : -1;
-      const ic = NAV_SUB_IC?.[view]?.[b.dataset.seg || b.dataset.set];
-      s.append(ic ? svg(ic, 14, 1.4) : el("i", "nav-s-ic"), el("span", "", name));
+      s.append(window.navSubIc?.(view, b) || el("i", "nav-s-ic"), el("span", "", name));
       if (b.dataset.sub === "installed" && pluginUpdates) {
         const up = el("em", "up", t(pluginUpdates === 1 ? "1 update" : "{n} updates", { n: pluginUpdates }));
         s.title = t("Newer versions of your plugins are out: update them under Installed");
