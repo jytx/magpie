@@ -1989,7 +1989,15 @@ func (s *Server) restAfterMarked(c candidate, status int, header http.Header, bo
 		restingUntil.m[id] = r.Until
 		restingUntil.note[id] = r
 	}
+	standing := restingUntil.m[id]
 	restingUntil.Unlock()
+	if a := c.p.Account; a != nil && a.UsageAgent() == "claude" && why == failQuota && id == c.restKey() {
+		// a Claude account rested whole for its allowance is out for the
+		// switch too, till the same time (claude-limits.json): it moved
+		// Claude Code onto an account the gateway had set aside. A rest
+		// of one model (Fable's own limit) leaves the account in
+		provider.NoteClaudeOut(a.User, standing, r.said, r.By == "resets" || r.By == "window" || r.By == "retry-after")
+	}
 	if id == c.restKey() && (why == failQuota || why == failCredit) {
 		// a pool routed Until used up goes on from it, though it renews
 		// before the pool's next request (dzxx0496); one model of it
@@ -2848,7 +2856,8 @@ func weighRouted(p provider.Provider, cs []candidate, model string, from provide
 		}
 		seats[i] = routes.Seat{Key: c.rest, Account: c.p.Account != nil, Known: known, Learns: learns(c, wg.lefts),
 			Used: l.used, WeekLow: l.weekLow, Soon: l.soon, Unreached: l.unreached, Lapse: l.lapse, Lapsing: l.lapsing, Pace: pace, Weight: keyWeight(c), Resting: resting(c), Tokens: routed.used[c.restKey()].now(now), Credits: l.credits, First: l.first,
-			Left: l.bal, LeftIn: l.balIn, Spent: spentRest(c), Lead: c.p.UseFirst}
+			Trial: l.credits && c.p.Account != nil && strings.HasPrefix(c.p.Account.UsageAgent(), "plugin:"),
+			Left:  l.bal, LeftIn: l.balIn, Spent: spentRest(c), Lead: c.p.UseFirst}
 	}
 	routed.Unlock()
 	if st.ByUse {
